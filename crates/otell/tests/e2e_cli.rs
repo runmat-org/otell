@@ -331,6 +331,27 @@ fn mcp_initialize_and_tools_list() {
 }
 
 #[test]
+#[serial]
+fn mcp_rejects_legacy_tool_shape() {
+    let output = Command::new(bin())
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            let stdin = child.stdin.as_mut().unwrap();
+            stdin.write_all(b"{\"tool\":\"status\",\"args\":{}}\n")?;
+            drop(child.stdin.take());
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("unsupported method"));
+}
+
+#[test]
 fn intro_without_server_guides_startup() {
     let output = Command::new(bin()).arg("intro").output().unwrap();
     let out = String::from_utf8_lossy(&output.stdout);

@@ -458,8 +458,6 @@ async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<(
         id: Option<serde_json::Value>,
         method: Option<String>,
         params: Option<serde_json::Value>,
-        tool: Option<String>,
-        args: Option<serde_json::Value>,
     }
 
     fn mcp_ok(id: Option<serde_json::Value>, result: serde_json::Value) -> serde_json::Value {
@@ -511,35 +509,37 @@ async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<(
             continue;
         }
 
-        let method_tool = if matches!(input.method.as_deref(), Some("tools/call")) {
-            input
-                .params
-                .as_ref()
-                .and_then(|p| p.get("name"))
-                .and_then(|n| n.as_str())
-                .map(|s| s.to_string())
-        } else {
-            input.tool.clone()
-        };
+        if !matches!(input.method.as_deref(), Some("tools/call")) {
+            println!(
+                "{}",
+                serde_json::to_string(&mcp_err(
+                    input.id,
+                    "unsupported method (expected initialize, tools/list, tools/call)".to_string()
+                ))?
+            );
+            continue;
+        }
 
-        let method_args = if matches!(input.method.as_deref(), Some("tools/call")) {
-            input
-                .params
-                .as_ref()
-                .and_then(|p| p.get("arguments"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}))
-        } else {
-            input.args.clone().unwrap_or_else(|| serde_json::json!({}))
-        };
-
-        let Some(tool_name) = method_tool else {
+        let tool_name = input
+            .params
+            .as_ref()
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .map(|s| s.to_string());
+        let Some(tool_name) = tool_name else {
             println!(
                 "{}",
                 serde_json::to_string(&mcp_err(input.id, "missing tool name".to_string()))?
             );
             continue;
         };
+
+        let method_args = input
+            .params
+            .as_ref()
+            .and_then(|p| p.get("arguments"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
 
         let request = match tool_name.as_str() {
             "search" => {
@@ -583,14 +583,10 @@ async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<(
             Err(e) => ApiResponse::Error(format!("invalid tool arguments: {e}")),
         };
 
-        if input.method.is_some() {
-            println!(
-                "{}",
-                serde_json::to_string(&mcp_ok(input.id, serde_json::to_value(response)?))?
-            );
-        } else {
-            println!("{}", serde_json::to_string(&response)?);
-        }
+        println!(
+            "{}",
+            serde_json::to_string(&mcp_ok(input.id, serde_json::to_value(response)?))?
+        );
     }
 
     Ok(())
