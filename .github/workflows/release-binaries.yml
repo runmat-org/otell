@@ -1,0 +1,75 @@
+name: Release Binaries
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+          - name: macos-aarch64
+            os: macos-14
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked -p otell --target ${{ matrix.target }}
+
+      - name: Package artifact (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          NAME="otell-${TAG}-${{ matrix.name }}"
+          mkdir "$NAME"
+          cp "target/${{ matrix.target }}/release/otell" "$NAME/"
+          tar -czf "${NAME}.tar.gz" "$NAME"
+
+      - name: Package artifact (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $name = "otell-$tag-${{ matrix.name }}"
+          New-Item -ItemType Directory -Path $name | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/otell.exe" "$name/otell.exe"
+          Compress-Archive -Path $name -DestinationPath "$name.zip"
+
+      - name: Upload artifact to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: |
+            otell-${{ github.event.release.tag_name }}-${{ matrix.name }}.${{ matrix.archive_ext }}

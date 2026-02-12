@@ -20,10 +20,10 @@ impl QueryClient {
             return Ok(Self::Uds(BufReader::new(stream)));
         }
 
-        if let Ok(path) = std::env::var("OTELL_QUERY_UDS_PATH") {
-            if let Ok(stream) = UnixStream::connect(path).await {
-                return Ok(Self::Uds(BufReader::new(stream)));
-            }
+        if let Ok(path) = std::env::var("OTELL_QUERY_UDS_PATH")
+            && let Ok(stream) = UnixStream::connect(path).await
+        {
+            return Ok(Self::Uds(BufReader::new(stream)));
         }
 
         let addr = addr

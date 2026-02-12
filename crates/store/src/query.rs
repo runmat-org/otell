@@ -195,10 +195,10 @@ impl Store {
             if !in_window(start, &req.window.since, &req.window.until) {
                 continue;
             }
-            if let Some(filter_status) = &req.status {
-                if status != *filter_status {
-                    continue;
-                }
+            if let Some(filter_status) = &req.status
+                && status != *filter_status
+            {
+                continue;
             }
             items.push(TraceListItem {
                 trace_id,
@@ -248,10 +248,10 @@ impl Store {
             if !in_window(p.ts, &req.window.since, &req.window.until) {
                 continue;
             }
-            if let Some(service) = &req.service {
-                if &p.service != service {
-                    continue;
-                }
+            if let Some(service) = &req.service
+                && &p.service != service
+            {
+                continue;
             }
             points.push(p);
         }
@@ -287,10 +287,10 @@ impl Store {
             if !in_window(ts, &req.window.since, &req.window.until) {
                 continue;
             }
-            if let Some(filter) = &req.service {
-                if &service != filter {
-                    continue;
-                }
+            if let Some(filter) = &req.service
+                && &service != filter
+            {
+                continue;
             }
             *counts.entry(name).or_insert(0) += 1;
         }
@@ -337,25 +337,25 @@ impl Store {
             if !in_window(record.ts, &req.window.since, &req.window.until) {
                 continue;
             }
-            if let Some(service) = &req.service {
-                if record.service != *service {
-                    continue;
-                }
+            if let Some(service) = &req.service
+                && record.service != *service
+            {
+                continue;
             }
-            if let Some(trace_id) = &req.trace_id {
-                if record.trace_id.as_deref() != Some(trace_id.as_str()) {
-                    continue;
-                }
+            if let Some(trace_id) = &req.trace_id
+                && record.trace_id.as_deref() != Some(trace_id.as_str())
+            {
+                continue;
             }
-            if let Some(span_id) = &req.span_id {
-                if record.span_id.as_deref() != Some(span_id.as_str()) {
-                    continue;
-                }
+            if let Some(span_id) = &req.span_id
+                && record.span_id.as_deref() != Some(span_id.as_str())
+            {
+                continue;
             }
-            if let Some(severity) = req.severity_gte {
-                if record.severity < severity as i32 {
-                    continue;
-                }
+            if let Some(severity) = req.severity_gte
+                && record.severity < severity as i32
+            {
+                continue;
             }
             if !matches_attr_filters(&record.attrs_json, &req.attr_filters) {
                 continue;
@@ -526,9 +526,9 @@ impl Store {
         }
 
         let mut output = Vec::new();
-        for idx in 0..all.len() {
+        for (idx, row) in all.iter().enumerate() {
             if keep.contains(&idx) {
-                output.push(all[idx].clone());
+                output.push(row.clone());
             }
         }
         Ok(output)
@@ -668,10 +668,10 @@ fn filter_subtree(spans: Vec<SpanRecord>, root: &str) -> Vec<SpanRecord> {
     let mut keep = HashSet::new();
     let mut stack = vec![root.to_string()];
     while let Some(id) = stack.pop() {
-        if keep.insert(id.clone()) {
-            if let Some(next) = children.get(&Some(id)) {
-                stack.extend(next.iter().cloned());
-            }
+        if keep.insert(id.clone())
+            && let Some(next) = children.get(&Some(id))
+        {
+            stack.extend(next.iter().cloned());
         }
     }
 
@@ -692,15 +692,15 @@ fn in_window(
     since: &Option<DateTime<Utc>>,
     until: &Option<DateTime<Utc>>,
 ) -> bool {
-    if let Some(since) = since {
-        if ts < *since {
-            return false;
-        }
+    if let Some(since) = since
+        && ts < *since
+    {
+        return false;
     }
-    if let Some(until) = until {
-        if ts > *until {
-            return false;
-        }
+    if let Some(until) = until
+        && ts > *until
+    {
+        return false;
     }
     true
 }

@@ -210,7 +210,6 @@ mod tests {
             trace_id: vec![1; 16],
             span_id: vec![2; 8],
             event_name: "".into(),
-            ..Default::default()
         };
 
         let out = decode_log(Some(&resource), None, &log);

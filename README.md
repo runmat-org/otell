@@ -52,6 +52,7 @@ Paste the contents of `MODEL_QUICKSTART.md` into your AGENTS.md file or equivale
 - API reference: [docs/API.md](docs/API.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Configuration: [docs/CONFIG.md](docs/CONFIG.md)
+- Development + release: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## Common commands
 

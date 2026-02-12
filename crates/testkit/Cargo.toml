@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+publish = false
 
 [dependencies]
 anyhow.workspace = true
@@ -12,4 +13,4 @@ opentelemetry-proto.workspace = true
 prost.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-otell-core = { path = "../core" }
+otell-core = { version = "0.1.0", path = "../core" }

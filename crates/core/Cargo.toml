@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Core shared models and query schemas for otell"
 
 [dependencies]
 chrono.workspace = true

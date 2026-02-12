@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "OTLP ingest servers and decode pipeline for otell"
 
 [dependencies]
 axum.workspace = true
@@ -17,8 +18,8 @@ tokio.workspace = true
 tonic.workspace = true
 tower.workspace = true
 tracing.workspace = true
-otell-core = { path = "../core" }
-otell-store = { path = "../store" }
+otell-core = { version = "0.1.0", path = "../core" }
+otell-store = { version = "0.1.0", path = "../store" }
 
 [dev-dependencies]
 anyhow.workspace = true

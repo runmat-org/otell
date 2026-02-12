@@ -4,6 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "Local OpenTelemetry ingest and query utility"
+readme = "../../README.md"
 
 [dependencies]
 anyhow.workspace = true
@@ -18,9 +20,9 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
-otell-core = { path = "../core" }
-otell-ingest = { path = "../ingest" }
-otell-store = { path = "../store" }
+otell-core = { version = "0.1.0", path = "../core" }
+otell-ingest = { version = "0.1.0", path = "../ingest" }
+otell-store = { version = "0.1.0", path = "../store" }
 
 [dev-dependencies]
 anyhow.workspace = true

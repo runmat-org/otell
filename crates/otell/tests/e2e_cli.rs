@@ -1,4 +1,5 @@
 use std::net::TcpListener;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -21,7 +22,7 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_otell")
 }
 
-fn spawn_server(temp: &PathBuf) -> (Child, u16, u16, u16, u16, PathBuf, PathBuf) {
+fn spawn_server(temp: &Path) -> (Child, u16, u16, u16, u16, PathBuf, PathBuf) {
     let grpc_port = free_port();
     let http_port = free_port();
     let query_port = free_port();
@@ -126,7 +127,7 @@ async fn wait_http_ready(port: u16, child: &mut Child) {
 async fn e2e_http_ingest_and_tcp_search() {
     let temp = tempfile::tempdir().unwrap();
     let (mut child, _grpc_port, http_port, query_port, _query_http_port, _db, _uds) =
-        spawn_server(&temp.path().to_path_buf());
+        spawn_server(temp.path());
 
     wait_http_ready(http_port, &mut child).await;
 
@@ -166,7 +167,7 @@ async fn e2e_http_ingest_and_tcp_search() {
 async fn e2e_search_count_stats_and_status_json_shape() {
     let temp = tempfile::tempdir().unwrap();
     let (mut child, _grpc_port, http_port, query_port, _query_http_port, _db, _uds) =
-        spawn_server(&temp.path().to_path_buf());
+        spawn_server(temp.path());
 
     wait_http_ready(http_port, &mut child).await;
 
@@ -214,21 +215,20 @@ async fn e2e_search_count_stats_and_status_json_shape() {
 async fn e2e_grpc_ingest_and_uds_search() {
     let temp = tempfile::tempdir().unwrap();
     let (mut child, grpc_port, http_port, _query_port, _query_http_port, _db, uds) =
-        spawn_server(&temp.path().to_path_buf());
+        spawn_server(temp.path());
     let _ = http_port;
     let mut exported = false;
     for _ in 0..60 {
         assert!(child.try_wait().unwrap().is_none(), "otell exited early");
         let endpoint = format!("http://127.0.0.1:{grpc_port}");
-        if let Ok(mut grpc_client) = LogsServiceClient::connect(endpoint).await {
-            if grpc_client
+        if let Ok(mut grpc_client) = LogsServiceClient::connect(endpoint).await
+            && grpc_client
                 .export(tonic::Request::new(sample_logs_request("grpc path")))
                 .await
                 .is_ok()
-            {
-                exported = true;
-                break;
-            }
+        {
+            exported = true;
+            break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
@@ -255,7 +255,7 @@ async fn e2e_grpc_ingest_and_uds_search() {
 async fn e2e_http_query_api() {
     let temp = tempfile::tempdir().unwrap();
     let (mut child, _grpc_port, http_port, _query_port, query_http_port, _db, _uds) =
-        spawn_server(&temp.path().to_path_buf());
+        spawn_server(temp.path());
     wait_http_ready(http_port, &mut child).await;
 
     let req = sample_logs_request("via query http");

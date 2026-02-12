@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+description = "DuckDB storage layer for otell telemetry"
 
 [dependencies]
 chrono.workspace = true
@@ -14,7 +15,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-otell-core = { path = "../core" }
+otell-core = { version = "0.1.0", path = "../core" }
 
 [dev-dependencies]
 anyhow.workspace = true
