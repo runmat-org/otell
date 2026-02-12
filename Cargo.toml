@@ -13,6 +13,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["otell contributors"]
+repository = "https://github.com/runmat-org/otell"
 
 [workspace.dependencies]
 anyhow = "1.0"
