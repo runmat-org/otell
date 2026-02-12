@@ -1,0 +1,24 @@
+[package]
+name = "otell-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+axum.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures.workspace = true
+opentelemetry-proto.workspace = true
+prost.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tower.workspace = true
+tracing.workspace = true
+otell-core = { path = "../core" }
+otell-store = { path = "../store" }
+
+[dev-dependencies]
+anyhow.workspace = true

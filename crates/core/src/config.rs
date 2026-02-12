@@ -1,0 +1,102 @@
+use std::env;
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::error::{OtellError, Result};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Config {
+    pub db_path: PathBuf,
+    pub otlp_grpc_addr: String,
+    pub otlp_http_addr: String,
+    pub query_tcp_addr: String,
+    pub uds_path: PathBuf,
+    pub retention_ttl: Duration,
+    pub retention_max_bytes: u64,
+    pub write_batch_size: usize,
+    pub write_flush_ms: u64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let xdg_runtime = env::var("XDG_RUNTIME_DIR").ok();
+        let data_home = env::var("XDG_DATA_HOME").ok();
+
+        let data_root = data_home
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(home).join(".local/share"));
+
+        let uds_path = xdg_runtime
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_root.join("otell"))
+            .join("otell.sock");
+
+        Self {
+            db_path: data_root.join("otell/otell.duckdb"),
+            otlp_grpc_addr: "127.0.0.1:4317".to_string(),
+            otlp_http_addr: "127.0.0.1:4318".to_string(),
+            query_tcp_addr: "127.0.0.1:1777".to_string(),
+            uds_path,
+            retention_ttl: Duration::from_secs(60 * 60 * 24),
+            retention_max_bytes: 2 * 1024 * 1024 * 1024,
+            write_batch_size: 2048,
+            write_flush_ms: 200,
+        }
+    }
+}
+
+impl Config {
+    pub fn from_env() -> Result<Self> {
+        let mut cfg = Self::default();
+
+        if let Ok(v) = env::var("OTELL_DB_PATH") {
+            cfg.db_path = PathBuf::from(v);
+        }
+        if let Ok(v) = env::var("OTELL_OTLP_GRPC_ADDR") {
+            cfg.otlp_grpc_addr = v;
+        }
+        if let Ok(v) = env::var("OTELL_OTLP_HTTP_ADDR") {
+            cfg.otlp_http_addr = v;
+        }
+        if let Ok(v) = env::var("OTELL_QUERY_TCP_ADDR") {
+            cfg.query_tcp_addr = v;
+        }
+        if let Ok(v) = env::var("OTELL_QUERY_UDS_PATH") {
+            cfg.uds_path = PathBuf::from(v);
+        }
+        if let Ok(v) = env::var("OTELL_RETENTION_TTL") {
+            cfg.retention_ttl = humantime::parse_duration(&v)
+                .map_err(|e| OtellError::Config(format!("bad OTELL_RETENTION_TTL: {e}")))?;
+        }
+        if let Ok(v) = env::var("OTELL_RETENTION_MAX_BYTES") {
+            cfg.retention_max_bytes = v
+                .parse::<u64>()
+                .map_err(|e| OtellError::Config(format!("bad OTELL_RETENTION_MAX_BYTES: {e}")))?;
+        }
+
+        Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_has_expected_ports() {
+        let cfg = Config::default();
+        assert_eq!(cfg.otlp_grpc_addr, "127.0.0.1:4317");
+        assert_eq!(cfg.otlp_http_addr, "127.0.0.1:4318");
+        assert_eq!(cfg.query_tcp_addr, "127.0.0.1:1777");
+    }
+
+    #[test]
+    fn default_has_retention() {
+        let cfg = Config::default();
+        assert_eq!(cfg.retention_ttl, Duration::from_secs(86_400));
+        assert!(cfg.retention_max_bytes > 1024 * 1024);
+    }
+}
