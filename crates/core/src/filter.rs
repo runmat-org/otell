@@ -32,17 +32,12 @@ impl FromStr for Severity {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SortOrder {
+    #[default]
     TsAsc,
     TsDesc,
     DurationDesc,
-}
-
-impl Default for SortOrder {
-    fn default() -> Self {
-        Self::TsAsc
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
