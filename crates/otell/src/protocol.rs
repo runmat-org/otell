@@ -1,6 +1,7 @@
 use otell_core::query::{
-    MetricsRequest, MetricsResponse, SearchRequest, SearchResponse, SpanRequest, SpanResponse,
-    StatusResponse, TraceListItem, TraceRequest, TraceResponse, TracesRequest,
+    MetricsListRequest, MetricsListResponse, MetricsRequest, MetricsResponse, QueryHandle,
+    SearchRequest, SearchResponse, SpanRequest, SpanResponse, StatusResponse, TraceListItem,
+    TraceRequest, TraceResponse, TracesRequest,
 };
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,8 @@ pub enum ApiRequest {
     Span(SpanRequest),
     Traces(TracesRequest),
     Metrics(MetricsRequest),
+    MetricsList(MetricsListRequest),
+    ResolveHandle(QueryHandle),
     Status,
 }
 
@@ -21,6 +24,7 @@ pub enum ApiResponse {
     Span(SpanResponse),
     Traces(Vec<TraceListItem>),
     Metrics(MetricsResponse),
+    MetricsList(MetricsListResponse),
     Status(StatusResponse),
     Error(String),
 }

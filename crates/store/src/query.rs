@@ -9,8 +9,9 @@ use otell_core::model::log::LogRecord;
 use otell_core::model::metric::MetricPoint;
 use otell_core::model::span::SpanRecord;
 use otell_core::query::{
-    LogContextMode, LogsContextMeta, MetricSeries, MetricsRequest, MetricsResponse, SearchRequest,
-    SearchResponse, SpanRequest, SpanResponse, TraceListItem, TraceRequest, TraceResponse,
+    LogContextMode, LogsContextMeta, MetricNameItem, MetricSeries, MetricsListRequest,
+    MetricsListResponse, MetricsRequest, MetricsResponse, SearchRequest, SearchResponse,
+    SearchStats, SpanRequest, SpanResponse, TraceListItem, TraceRequest, TraceResponse,
     TracesRequest,
 };
 use regex::RegexBuilder;
@@ -22,16 +23,30 @@ impl Store {
         let candidates = self.fetch_logs_candidates(req)?;
         let filtered = apply_pattern(candidates, req)?;
         let total_matches = filtered.len();
+        let stats = req.include_stats.then(|| compute_search_stats(&filtered));
+
+        if req.count_only {
+            return Ok(SearchResponse {
+                total_matches,
+                returned: 0,
+                records: Vec::new(),
+                stats,
+            });
+        }
 
         let mut selected = filtered.into_iter().take(req.limit).collect::<Vec<_>>();
         if req.context_lines > 0 {
             selected = self.expand_with_context(&selected, req.context_lines)?;
+        }
+        if let Some(seconds) = req.context_seconds {
+            selected = self.expand_with_time_context(&selected, seconds)?;
         }
 
         Ok(SearchResponse {
             total_matches,
             returned: selected.len(),
             records: selected,
+            stats,
         })
     }
 
@@ -248,6 +263,46 @@ impl Store {
             req.limit,
         );
         Ok(MetricsResponse { points, series })
+    }
+
+    pub fn list_metric_names(&self, req: &MetricsListRequest) -> Result<MetricsListResponse> {
+        let conn = self.conn();
+        let mut stmt = conn
+            .prepare("SELECT ts, name, service FROM metric_points ORDER BY ts DESC")
+            .map_err(|e| OtellError::Store(format!("prepare metric names failed: {e}")))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let ts = naive_to_utc(row.get::<_, NaiveDateTime>(0)?);
+                let name = row.get::<_, String>(1)?;
+                let service = row.get::<_, String>(2)?;
+                Ok((ts, name, service))
+            })
+            .map_err(|e| OtellError::Store(format!("query metric names failed: {e}")))?;
+
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for row in rows {
+            let (ts, name, service) =
+                row.map_err(|e| OtellError::Store(format!("map metric names row failed: {e}")))?;
+            if !in_window(ts, &req.window.since, &req.window.until) {
+                continue;
+            }
+            if let Some(filter) = &req.service {
+                if &service != filter {
+                    continue;
+                }
+            }
+            *counts.entry(name).or_insert(0) += 1;
+        }
+
+        let mut metrics = counts
+            .into_iter()
+            .map(|(name, count)| MetricNameItem { name, count })
+            .collect::<Vec<_>>();
+        metrics.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.name.cmp(&b.name)));
+        metrics.truncate(req.limit);
+
+        Ok(MetricsListResponse { metrics })
     }
 
     fn fetch_logs_candidates(&self, req: &SearchRequest) -> Result<Vec<LogRecord>> {
@@ -477,6 +532,73 @@ impl Store {
             }
         }
         Ok(output)
+    }
+
+    fn expand_with_time_context(
+        &self,
+        selected: &[LogRecord],
+        seconds: i64,
+    ) -> Result<Vec<LogRecord>> {
+        if selected.is_empty() || seconds <= 0 {
+            return Ok(selected.to_vec());
+        }
+
+        let req = SearchRequest {
+            limit: usize::MAX,
+            ..SearchRequest::default()
+        };
+        let all = self.fetch_logs_candidates(&req)?;
+        let mut keep = Vec::new();
+
+        for row in &all {
+            let mut in_window_for_any = false;
+            for m in selected {
+                let delta_ms = (row.ts - m.ts).num_milliseconds().abs();
+                if delta_ms <= seconds * 1000 {
+                    in_window_for_any = true;
+                    break;
+                }
+            }
+            if in_window_for_any {
+                keep.push(row.clone());
+            }
+        }
+
+        dedupe_logs(&mut keep);
+        Ok(keep)
+    }
+}
+
+fn compute_search_stats(records: &[LogRecord]) -> SearchStats {
+    let mut by_service: HashMap<String, usize> = HashMap::new();
+    let mut by_severity: HashMap<String, usize> = HashMap::new();
+    for record in records {
+        *by_service.entry(record.service.clone()).or_insert(0) += 1;
+        *by_severity
+            .entry(severity_label(record.severity).to_string())
+            .or_insert(0) += 1;
+    }
+
+    let mut svc = by_service.into_iter().collect::<Vec<_>>();
+    svc.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    let mut sev = by_severity.into_iter().collect::<Vec<_>>();
+    sev.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    SearchStats {
+        by_service: svc,
+        by_severity: sev,
+    }
+}
+
+fn severity_label(level: i32) -> &'static str {
+    match level {
+        1..=4 => "TRACE",
+        5..=8 => "DEBUG",
+        9..=12 => "INFO",
+        13..=16 => "WARN",
+        17..=20 => "ERROR",
+        _ => "FATAL",
     }
 }
 
@@ -888,5 +1010,140 @@ mod tests {
 
         assert_eq!(res.records.len(), 3);
         assert_eq!(res.records[1].body, "needle");
+    }
+
+    #[test]
+    fn search_count_only_with_stats() {
+        let store = Store::open_in_memory().unwrap();
+        let t0 = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        store
+            .insert_logs(&[
+                LogRecord {
+                    ts: t0,
+                    service: "api".into(),
+                    severity: 17,
+                    trace_id: None,
+                    span_id: None,
+                    body: "timeout".into(),
+                    attrs_json: "{}".into(),
+                    attrs_text: "".into(),
+                },
+                LogRecord {
+                    ts: t0 + chrono::Duration::seconds(1),
+                    service: "api".into(),
+                    severity: 13,
+                    trace_id: None,
+                    span_id: None,
+                    body: "timeout".into(),
+                    attrs_json: "{}".into(),
+                    attrs_text: "".into(),
+                },
+            ])
+            .unwrap();
+
+        let res = store
+            .search_logs(&SearchRequest {
+                pattern: Some("timeout".into()),
+                count_only: true,
+                include_stats: true,
+                ..SearchRequest::default()
+            })
+            .unwrap();
+
+        assert_eq!(res.total_matches, 2);
+        assert_eq!(res.returned, 0);
+        assert!(res.records.is_empty());
+        let stats = res.stats.unwrap();
+        assert_eq!(stats.by_service[0], ("api".to_string(), 2));
+    }
+
+    #[test]
+    fn search_time_context_includes_neighbors_by_time() {
+        let store = Store::open_in_memory().unwrap();
+        let t0 = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        store
+            .insert_logs(&[
+                LogRecord {
+                    ts: t0,
+                    service: "api".into(),
+                    severity: 9,
+                    trace_id: None,
+                    span_id: None,
+                    body: "pre".into(),
+                    attrs_json: "{}".into(),
+                    attrs_text: "".into(),
+                },
+                LogRecord {
+                    ts: t0 + chrono::Duration::milliseconds(500),
+                    service: "api".into(),
+                    severity: 17,
+                    trace_id: None,
+                    span_id: None,
+                    body: "needle".into(),
+                    attrs_json: "{}".into(),
+                    attrs_text: "".into(),
+                },
+                LogRecord {
+                    ts: t0 + chrono::Duration::seconds(2),
+                    service: "api".into(),
+                    severity: 9,
+                    trace_id: None,
+                    span_id: None,
+                    body: "post".into(),
+                    attrs_json: "{}".into(),
+                    attrs_text: "".into(),
+                },
+            ])
+            .unwrap();
+
+        let res = store
+            .search_logs(&SearchRequest {
+                pattern: Some("needle".into()),
+                context_seconds: Some(1),
+                ..SearchRequest::default()
+            })
+            .unwrap();
+        assert_eq!(res.records.len(), 2);
+    }
+
+    #[test]
+    fn metrics_list_names() {
+        let store = Store::open_in_memory().unwrap();
+        let t0 = chrono::Utc.with_ymd_and_hms(2026, 2, 1, 0, 0, 0).unwrap();
+        store
+            .insert_metrics(&[
+                MetricPoint {
+                    ts: t0,
+                    name: "a".into(),
+                    service: "api".into(),
+                    value: 1.0,
+                    attrs_json: "{}".into(),
+                },
+                MetricPoint {
+                    ts: t0 + chrono::Duration::seconds(1),
+                    name: "b".into(),
+                    service: "api".into(),
+                    value: 1.0,
+                    attrs_json: "{}".into(),
+                },
+                MetricPoint {
+                    ts: t0 + chrono::Duration::seconds(2),
+                    name: "a".into(),
+                    service: "api".into(),
+                    value: 1.0,
+                    attrs_json: "{}".into(),
+                },
+            ])
+            .unwrap();
+
+        let res = store
+            .list_metric_names(&otell_core::query::MetricsListRequest {
+                service: Some("api".into()),
+                window: TimeWindow::all(),
+                limit: 10,
+            })
+            .unwrap();
+        assert_eq!(res.metrics[0].name, "a");
+        assert_eq!(res.metrics[0].count, 2);
     }
 }

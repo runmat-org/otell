@@ -7,21 +7,23 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Context;
+use base64::Engine;
 use clap::{Parser, Subcommand};
 use otell_core::config::Config;
 use otell_core::filter::{AttrFilter, Severity, SortOrder, TimeWindow};
 use otell_core::query::{
-    LogContextMode, MetricsRequest, SearchRequest, SpanRequest, TraceRequest, TracesRequest,
+    LogContextMode, MetricsListRequest, MetricsRequest, QueryHandle, SearchRequest, SpanRequest,
+    TraceRequest, TracesRequest,
 };
-use otell_core::time::parse_time_or_relative;
+use otell_core::time::{parse_duration_str, parse_time_or_relative};
 use otell_ingest::pipeline::PipelineConfig;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing_subscriber::EnvFilter;
 
 use crate::client::QueryClient;
 use crate::output::{
-    print_metrics_human, print_search_human, print_span_human, print_status_human,
-    print_trace_human, print_traces_human,
+    print_metrics_human, print_metrics_list_human, print_search_human, print_span_human,
+    print_status_human, print_trace_human, print_traces_human,
 };
 use crate::protocol::{ApiRequest, ApiResponse};
 
@@ -44,6 +46,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(about = "Run ingest and query servers")]
     Run {
         #[arg(long)]
         db_path: Option<PathBuf>,
@@ -54,8 +57,11 @@ enum Commands {
         #[arg(long)]
         query_tcp_addr: Option<String>,
         #[arg(long)]
+        query_http_addr: Option<String>,
+        #[arg(long)]
         query_uds_path: Option<PathBuf>,
     },
+    #[command(about = "Search logs with deterministic filters")]
     Search {
         pattern: String,
         #[arg(long)]
@@ -76,13 +82,18 @@ enum Commands {
         severity: Option<String>,
         #[arg(long = "where")]
         where_filters: Vec<String>,
-        #[arg(short = 'C', default_value_t = 0)]
-        context: usize,
+        #[arg(short = 'C', help = "Context lines (e.g. 20) or time (e.g. 2s)")]
+        context: Option<String>,
+        #[arg(long, help = "Only return total match count")]
+        count: bool,
+        #[arg(long, help = "Include grouped stats in response")]
+        stats: bool,
         #[arg(long, default_value_t = 100)]
         limit: usize,
         #[arg(long, default_value = "ts_asc")]
         sort: String,
     },
+    #[command(about = "Inspect a trace and related logs")]
     Trace {
         trace_id: String,
         #[arg(long)]
@@ -90,12 +101,14 @@ enum Commands {
         #[arg(long, default_value = "bounded")]
         logs: String,
     },
+    #[command(about = "Inspect a specific span")]
     Span {
         trace_id: String,
         span_id: String,
         #[arg(long, default_value = "bounded")]
         logs: String,
     },
+    #[command(about = "List traces")]
     Traces {
         #[arg(long)]
         since: Option<String>,
@@ -110,8 +123,9 @@ enum Commands {
         #[arg(long, default_value = "duration_desc")]
         sort: String,
     },
+    #[command(about = "Query metric points or list metric names")]
     Metrics {
-        name: String,
+        name: Option<String>,
         #[arg(long)]
         since: Option<String>,
         #[arg(long)]
@@ -126,7 +140,15 @@ enum Commands {
         limit: usize,
     },
     Status,
-    Doctor,
+    #[command(about = "Execute a previously emitted handle")]
+    Handle {
+        handle: String,
+    },
+    #[command(about = "Learn otell quickly via live probes")]
+    Intro {
+        #[arg(long, help = "Human-friendly explanatory output")]
+        human: bool,
+    },
     Mcp,
 }
 
@@ -145,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             otlp_grpc_addr,
             otlp_http_addr,
             query_tcp_addr,
+            query_http_addr,
             query_uds_path,
         } => {
             run_server(
@@ -152,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
                 otlp_grpc_addr,
                 otlp_http_addr,
                 query_tcp_addr,
+                query_http_addr,
                 query_uds_path,
             )
             .await
@@ -168,10 +192,13 @@ async fn main() -> anyhow::Result<()> {
             severity,
             where_filters,
             context,
+            count,
+            stats,
             limit,
             sort,
         } => {
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
+            let (context_lines, context_seconds) = parse_context(context)?;
             let req = SearchRequest {
                 pattern: Some(pattern),
                 fixed,
@@ -187,10 +214,18 @@ async fn main() -> anyhow::Result<()> {
                 window: parse_window(since, until)?,
                 sort: parse_sort(&sort),
                 limit,
-                context_lines: context,
+                context_lines,
+                context_seconds,
+                count_only: count,
+                include_stats: stats,
             };
-            let response = client.request(ApiRequest::Search(req)).await?;
+            let api_req = ApiRequest::Search(req);
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
             print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
             Ok(())
         }
         Commands::Trace {
@@ -204,8 +239,13 @@ async fn main() -> anyhow::Result<()> {
                 root_span_id: root,
                 logs: parse_logs_mode(&logs)?,
             };
-            let response = client.request(ApiRequest::Trace(req)).await?;
+            let api_req = ApiRequest::Trace(req);
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
             print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
             Ok(())
         }
         Commands::Span {
@@ -219,8 +259,13 @@ async fn main() -> anyhow::Result<()> {
                 span_id,
                 logs: parse_logs_mode(&logs)?,
             };
-            let response = client.request(ApiRequest::Span(req)).await?;
+            let api_req = ApiRequest::Span(req);
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
             print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
             Ok(())
         }
         Commands::Traces {
@@ -239,8 +284,13 @@ async fn main() -> anyhow::Result<()> {
                 sort: parse_sort(&sort),
                 limit,
             };
-            let response = client.request(ApiRequest::Traces(req)).await?;
+            let api_req = ApiRequest::Traces(req);
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
             print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
             Ok(())
         }
         Commands::Metrics {
@@ -253,83 +303,294 @@ async fn main() -> anyhow::Result<()> {
             limit,
         } => {
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
-            let req = MetricsRequest {
-                name,
-                service,
-                window: parse_window(since, until)?,
-                group_by,
-                agg,
-                limit,
+            let api_req = if matches!(name.as_deref(), None | Some("list")) {
+                ApiRequest::MetricsList(MetricsListRequest {
+                    service,
+                    window: parse_window(since, until)?,
+                    limit,
+                })
+            } else {
+                ApiRequest::Metrics(MetricsRequest {
+                    name: name.unwrap_or_else(|| "list".to_string()),
+                    service,
+                    window: parse_window(since, until)?,
+                    group_by,
+                    agg,
+                    limit,
+                })
             };
-            let response = client.request(ApiRequest::Metrics(req)).await?;
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
             print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
             Ok(())
         }
         Commands::Status => {
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
-            let response = client.request(ApiRequest::Status).await?;
+            let api_req = ApiRequest::Status;
+            let handle = encode_handle(&api_req)?;
+            let response = client.request(api_req).await?;
+            print_response(response, cli.json)?;
+            if !cli.json {
+                println!("handle={handle}");
+            }
+            Ok(())
+        }
+        Commands::Handle { handle } => {
+            let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
+            let req = decode_handle(&handle)?;
+            let response = client.request(req).await?;
             print_response(response, cli.json)?;
             Ok(())
         }
-        Commands::Doctor => {
-            print_doctor();
-            Ok(())
-        }
+        Commands::Intro { human } => run_intro(cli.uds, cli.addr, cli.json, human).await,
         Commands::Mcp => run_mcp(cli.uds, cli.addr).await,
     }
 }
 
-async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<()> {
-    #[derive(serde::Deserialize)]
-    struct McpIn {
-        tool: String,
-        args: serde_json::Value,
+async fn run_intro(
+    uds: Option<PathBuf>,
+    addr: Option<String>,
+    json: bool,
+    human: bool,
+) -> anyhow::Result<()> {
+    let mut client = match QueryClient::connect(uds, addr).await {
+        Ok(c) => c,
+        Err(err) => {
+            if json {
+                let payload = serde_json::json!({
+                    "mode": if human {"human"} else {"llm"},
+                    "connected": false,
+                    "error": err.to_string(),
+                    "next": [
+                        "start server: otell run",
+                        "then rerun: otell intro"
+                    ]
+                });
+                println!("{}", serde_json::to_string_pretty(&payload)?);
+            } else if human {
+                println!("Could not connect to otell query server: {err}");
+                println!("Start it with: otell run");
+                println!("Then run: otell intro");
+            } else {
+                println!("INTRO mode=llm connected=false");
+                println!("error={err}");
+                println!("next=run `otell run` then `otell intro`");
+            }
+            return Ok(());
+        }
+    };
+
+    let status = client.request(ApiRequest::Status).await?;
+    let metrics = client
+        .request(ApiRequest::MetricsList(MetricsListRequest {
+            service: None,
+            window: TimeWindow::all(),
+            limit: 5,
+        }))
+        .await?;
+    let search = client
+        .request(ApiRequest::Search(SearchRequest {
+            pattern: Some("error|timeout".to_string()),
+            include_stats: true,
+            count_only: true,
+            limit: 100,
+            ..SearchRequest::default()
+        }))
+        .await?;
+
+    if json {
+        let payload = serde_json::json!({
+            "mode": if human {"human"} else {"llm"},
+            "connected": true,
+            "probes": {
+                "status": status,
+                "metrics_list": metrics,
+                "search_count_stats": search,
+            },
+            "next": [
+                "otell traces --since 15m --limit 20",
+                "otell trace <trace_id>",
+                "otell span <trace_id> <span_id>",
+                "reuse handle: otell handle <base64>"
+            ]
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
     }
 
-    let mut client = QueryClient::connect(uds, addr).await?;
+    if human {
+        println!("otell intro");
+        println!("- connected to local query server");
+        println!("- probe 1: status (dataset health)");
+        print_response(status, false)?;
+        println!("- probe 2: metrics list (what telemetry names exist)");
+        print_response(metrics, false)?;
+        println!("- probe 3: search count/stats for error signals");
+        print_response(search, false)?;
+        println!("next:");
+        println!("1) otell traces --since 15m --limit 20");
+        println!("2) otell trace <trace_id>");
+        println!("3) otell span <trace_id> <span_id>");
+        println!("4) otell handle <base64>");
+    } else {
+        println!("INTRO mode=llm connected=true");
+        println!("probe=status");
+        print_response(status, false)?;
+        println!("probe=metrics_list");
+        print_response(metrics, false)?;
+        println!("probe=search_count_stats pattern=error|timeout");
+        print_response(search, false)?;
+        println!("next=otell traces --since 15m --limit 20");
+        println!("next=otell trace <trace_id>");
+        println!("next=otell span <trace_id> <span_id>");
+        println!("next=otell handle <base64>");
+    }
+
+    Ok(())
+}
+
+async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<()> {
+    #[derive(serde::Deserialize)]
+    struct McpReq {
+        id: Option<serde_json::Value>,
+        method: Option<String>,
+        params: Option<serde_json::Value>,
+        tool: Option<String>,
+        args: Option<serde_json::Value>,
+    }
+
+    fn mcp_ok(id: Option<serde_json::Value>, result: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"result":result})
+    }
+
+    fn mcp_err(id: Option<serde_json::Value>, message: String) -> serde_json::Value {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"message":message}})
+    }
+
+    let mut client: Option<QueryClient> = None;
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
 
     while let Some(line) = lines.next_line().await? {
-        let input: Result<McpIn, _> = serde_json::from_str(&line);
+        let input: Result<McpReq, _> = serde_json::from_str(&line);
         let input = match input {
             Ok(v) => v,
             Err(e) => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&ApiResponse::Error(e.to_string()))?
-                );
+                println!("{}", serde_json::to_string(&mcp_err(None, e.to_string()))?);
                 continue;
             }
         };
 
-        let request = match input.tool.as_str() {
-            "search" => serde_json::from_value::<SearchRequest>(input.args).map(ApiRequest::Search),
-            "trace" => serde_json::from_value::<TraceRequest>(input.args).map(ApiRequest::Trace),
-            "span" => serde_json::from_value::<SpanRequest>(input.args).map(ApiRequest::Span),
-            "traces" => serde_json::from_value::<TracesRequest>(input.args).map(ApiRequest::Traces),
+        if matches!(input.method.as_deref(), Some("initialize")) {
+            let result = serde_json::json!({
+                "protocolVersion": "0.1.0",
+                "serverInfo": {"name": "otell", "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {
+                    "tools": {"listChanged": false}
+                }
+            });
+            println!("{}", serde_json::to_string(&mcp_ok(input.id, result))?);
+            continue;
+        }
+
+        if matches!(input.method.as_deref(), Some("tools/list")) {
+            let result = serde_json::json!({"tools": [
+                {"name":"search"},
+                {"name":"trace"},
+                {"name":"span"},
+                {"name":"traces"},
+                {"name":"metrics"},
+                {"name":"metrics.list"},
+                {"name":"status"},
+                {"name":"resolve_handle"}
+            ]});
+            println!("{}", serde_json::to_string(&mcp_ok(input.id, result))?);
+            continue;
+        }
+
+        let method_tool = if matches!(input.method.as_deref(), Some("tools/call")) {
+            input
+                .params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+        } else {
+            input.tool.clone()
+        };
+
+        let method_args = if matches!(input.method.as_deref(), Some("tools/call")) {
+            input
+                .params
+                .as_ref()
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({}))
+        } else {
+            input.args.clone().unwrap_or_else(|| serde_json::json!({}))
+        };
+
+        let Some(tool_name) = method_tool else {
+            println!(
+                "{}",
+                serde_json::to_string(&mcp_err(input.id, "missing tool name".to_string()))?
+            );
+            continue;
+        };
+
+        let request = match tool_name.as_str() {
+            "search" => {
+                serde_json::from_value::<SearchRequest>(method_args).map(ApiRequest::Search)
+            }
+            "trace" => serde_json::from_value::<TraceRequest>(method_args).map(ApiRequest::Trace),
+            "span" => serde_json::from_value::<SpanRequest>(method_args).map(ApiRequest::Span),
+            "traces" => {
+                serde_json::from_value::<TracesRequest>(method_args).map(ApiRequest::Traces)
+            }
             "metrics" => {
-                serde_json::from_value::<MetricsRequest>(input.args).map(ApiRequest::Metrics)
+                serde_json::from_value::<MetricsRequest>(method_args).map(ApiRequest::Metrics)
+            }
+            "metrics.list" => serde_json::from_value::<MetricsListRequest>(method_args)
+                .map(ApiRequest::MetricsList),
+            "resolve_handle" => {
+                serde_json::from_value::<QueryHandle>(method_args).map(ApiRequest::ResolveHandle)
             }
             "status" => Ok(ApiRequest::Status),
             _ => {
                 println!(
                     "{}",
-                    serde_json::to_string(&ApiResponse::Error("unknown mcp tool".to_string()))?
+                    serde_json::to_string(&mcp_err(input.id, "unknown mcp tool".to_string()))?
                 );
                 continue;
             }
         };
 
         let response = match request {
-            Ok(req) => client
-                .request(req)
-                .await
-                .unwrap_or_else(|e| ApiResponse::Error(e.to_string())),
+            Ok(req) => {
+                if client.is_none() {
+                    client = Some(QueryClient::connect(uds.clone(), addr.clone()).await?);
+                }
+                client
+                    .as_mut()
+                    .expect("client initialized")
+                    .request(req)
+                    .await
+                    .unwrap_or_else(|e| ApiResponse::Error(e.to_string()))
+            }
             Err(e) => ApiResponse::Error(format!("invalid tool arguments: {e}")),
         };
 
-        println!("{}", serde_json::to_string(&response)?);
+        if input.method.is_some() {
+            println!(
+                "{}",
+                serde_json::to_string(&mcp_ok(input.id, serde_json::to_value(response)?))?
+            );
+        } else {
+            println!("{}", serde_json::to_string(&response)?);
+        }
     }
 
     Ok(())
@@ -340,6 +601,7 @@ async fn run_server(
     otlp_grpc_addr: Option<String>,
     otlp_http_addr: Option<String>,
     query_tcp_addr: Option<String>,
+    query_http_addr: Option<String>,
     query_uds_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let mut cfg = Config::from_env().context("load config from env")?;
@@ -354,6 +616,9 @@ async fn run_server(
     }
     if let Some(v) = query_tcp_addr {
         cfg.query_tcp_addr = v;
+    }
+    if let Some(v) = query_http_addr {
+        cfg.query_http_addr = v;
     }
     if let Some(v) = query_uds_path {
         cfg.uds_path = v;
@@ -381,6 +646,11 @@ async fn run_server(
         cfg.query_tcp_addr.parse()?,
     ));
 
+    let query_http_task = tokio::spawn(query_server::run_query_http_server(
+        store.clone(),
+        cfg.query_http_addr.parse()?,
+    ));
+
     let retention_task = tokio::spawn({
         let store = store.clone();
         let ttl = cfg.retention_ttl;
@@ -401,6 +671,9 @@ async fn run_server(
             res??;
         }
         res = query_task => {
+            res??;
+        }
+        res = query_http_task => {
             res??;
         }
         _ = tokio::signal::ctrl_c() => {
@@ -435,6 +708,29 @@ fn parse_logs_mode(s: &str) -> anyhow::Result<LogContextMode> {
     }
 }
 
+fn parse_context(context: Option<String>) -> anyhow::Result<(usize, Option<i64>)> {
+    let Some(c) = context else {
+        return Ok((0, None));
+    };
+
+    if let Ok(lines) = c.parse::<usize>() {
+        return Ok((lines, None));
+    }
+
+    let duration = parse_duration_str(&c)?;
+    Ok((0, Some(duration.as_secs() as i64)))
+}
+
+fn encode_handle(req: &ApiRequest) -> anyhow::Result<String> {
+    let payload = serde_json::to_vec(req)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(payload))
+}
+
+fn decode_handle(handle: &str) -> anyhow::Result<ApiRequest> {
+    let bytes = base64::engine::general_purpose::STANDARD.decode(handle)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
 fn print_response(response: ApiResponse, json: bool) -> anyhow::Result<()> {
     if json {
         println!("{}", serde_json::to_string_pretty(&response)?);
@@ -447,18 +743,11 @@ fn print_response(response: ApiResponse, json: bool) -> anyhow::Result<()> {
         ApiResponse::Span(v) => print_span_human(&v),
         ApiResponse::Traces(v) => print_traces_human(&v),
         ApiResponse::Metrics(v) => print_metrics_human(&v),
+        ApiResponse::MetricsList(v) => print_metrics_list_human(&v),
         ApiResponse::Status(v) => print_status_human(&v),
         ApiResponse::Error(e) => eprintln!("error: {e}"),
     }
     Ok(())
-}
-
-fn print_doctor() {
-    println!("otell doctor");
-    println!("OTLP gRPC endpoint: 127.0.0.1:4317");
-    println!("OTLP HTTP endpoint: http://127.0.0.1:4318/v1/*");
-    println!("set OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318");
-    println!("set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf");
 }
 
 #[cfg(test)]
@@ -490,5 +779,12 @@ mod tests {
             SortOrder::DurationDesc
         ));
         assert!(matches!(parse_sort("other"), SortOrder::TsAsc));
+    }
+
+    #[test]
+    fn parse_context_lines_and_time() {
+        assert_eq!(parse_context(Some("20".into())).unwrap(), (20, None));
+        assert_eq!(parse_context(Some("2s".into())).unwrap(), (0, Some(2)));
+        assert!(parse_context(Some("wat".into())).is_err());
     }
 }

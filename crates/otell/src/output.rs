@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use chrono::SecondsFormat;
 use otell_core::query::{
-    MetricsResponse, SearchResponse, SpanResponse, StatusResponse, TraceListItem, TraceResponse,
+    MetricsListResponse, MetricsResponse, SearchResponse, SpanResponse, StatusResponse,
+    TraceListItem, TraceResponse,
 };
 
 pub fn print_search_human(v: &SearchResponse) {
@@ -24,6 +25,10 @@ pub fn print_search_human(v: &SearchResponse) {
         "-- {} matches ({} returned) --",
         v.total_matches, v.returned
     );
+    if let Some(stats) = &v.stats {
+        println!("stats.by_service={:?}", stats.by_service);
+        println!("stats.by_severity={:?}", stats.by_severity);
+    }
 }
 
 pub fn print_trace_human(v: &TraceResponse) {
@@ -97,6 +102,18 @@ pub fn print_metrics_human(v: &MetricsResponse) {
     for s in &v.series {
         println!("group={} value={}", s.group, s.value);
     }
+    println!(
+        "-- {} series ({} points) --",
+        v.series.len(),
+        v.points.len()
+    );
+}
+
+pub fn print_metrics_list_human(v: &MetricsListResponse) {
+    for metric in &v.metrics {
+        println!("name={} count={}", metric.name, metric.count);
+    }
+    println!("-- {} metric names --", v.metrics.len());
 }
 
 pub fn print_status_human(v: &StatusResponse) {

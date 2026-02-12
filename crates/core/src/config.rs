@@ -12,6 +12,7 @@ pub struct Config {
     pub otlp_grpc_addr: String,
     pub otlp_http_addr: String,
     pub query_tcp_addr: String,
+    pub query_http_addr: String,
     pub uds_path: PathBuf,
     pub retention_ttl: Duration,
     pub retention_max_bytes: u64,
@@ -39,6 +40,7 @@ impl Default for Config {
             otlp_grpc_addr: "127.0.0.1:4317".to_string(),
             otlp_http_addr: "127.0.0.1:4318".to_string(),
             query_tcp_addr: "127.0.0.1:1777".to_string(),
+            query_http_addr: "127.0.0.1:1778".to_string(),
             uds_path,
             retention_ttl: Duration::from_secs(60 * 60 * 24),
             retention_max_bytes: 2 * 1024 * 1024 * 1024,
@@ -63,6 +65,9 @@ impl Config {
         }
         if let Ok(v) = env::var("OTELL_QUERY_TCP_ADDR") {
             cfg.query_tcp_addr = v;
+        }
+        if let Ok(v) = env::var("OTELL_QUERY_HTTP_ADDR") {
+            cfg.query_http_addr = v;
         }
         if let Ok(v) = env::var("OTELL_QUERY_UDS_PATH") {
             cfg.uds_path = PathBuf::from(v);
@@ -91,6 +96,7 @@ mod tests {
         assert_eq!(cfg.otlp_grpc_addr, "127.0.0.1:4317");
         assert_eq!(cfg.otlp_http_addr, "127.0.0.1:4318");
         assert_eq!(cfg.query_tcp_addr, "127.0.0.1:1777");
+        assert_eq!(cfg.query_http_addr, "127.0.0.1:1778");
     }
 
     #[test]

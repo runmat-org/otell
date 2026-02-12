@@ -20,6 +20,9 @@ pub struct SearchRequest {
     pub sort: SortOrder,
     pub limit: usize,
     pub context_lines: usize,
+    pub context_seconds: Option<i64>,
+    pub count_only: bool,
+    pub include_stats: bool,
 }
 
 impl Default for SearchRequest {
@@ -37,8 +40,17 @@ impl Default for SearchRequest {
             sort: SortOrder::TsAsc,
             limit: 100,
             context_lines: 0,
+            context_seconds: None,
+            count_only: false,
+            include_stats: false,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SearchStats {
+    pub by_service: Vec<(String, usize)>,
+    pub by_severity: Vec<(String, usize)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +58,7 @@ pub struct SearchResponse {
     pub total_matches: usize,
     pub returned: usize,
     pub records: Vec<LogRecord>,
+    pub stats: Option<SearchStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +145,24 @@ pub struct MetricsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsListRequest {
+    pub service: Option<String>,
+    pub window: TimeWindow,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricNameItem {
+    pub name: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsListResponse {
+    pub metrics: Vec<MetricNameItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub db_path: String,
     pub db_size_bytes: u64,
@@ -140,4 +171,9 @@ pub struct StatusResponse {
     pub metrics_count: usize,
     pub oldest_ts: Option<DateTime<Utc>>,
     pub newest_ts: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryHandle {
+    pub handle: String,
 }

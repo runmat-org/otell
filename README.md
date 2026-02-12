@@ -20,8 +20,9 @@ It is designed for local development loops where you want a tool that can:
 - Query/control plane
   - UDS query server (default path from config)
   - TCP fallback query server (`--query-tcp-addr`, default `127.0.0.1:1777`)
+  - HTTP query API (`--query-http-addr`, default `127.0.0.1:1778`)
 - CLI
-  - `run`, `search`, `trace`, `span`, `traces`, `metrics`, `status`, `doctor`, `mcp`
+  - `run`, `search`, `trace`, `span`, `traces`, `metrics`, `status`, `handle`, `intro`, `mcp`
 - Deterministic defaults
   - explicit sorting, filtering, and bounded trace log context
 - Tests
@@ -49,6 +50,18 @@ Query logs:
 cargo run -p otell -- search "timeout" --since 15m --service api
 ```
 
+Count-only and stats mode:
+
+```bash
+cargo run -p otell -- search "timeout" --count --stats
+```
+
+Time context around matches:
+
+```bash
+cargo run -p otell -- search "timeout" -C 2s
+```
+
 Inspect a trace:
 
 ```bash
@@ -67,6 +80,58 @@ Check status:
 cargo run -p otell -- status
 ```
 
+LLM-first onboarding probe flow:
+
+```bash
+cargo run -p otell -- intro
+```
+
+Human-friendly onboarding output:
+
+```bash
+cargo run -p otell -- intro --human
+```
+
+List metric names:
+
+```bash
+cargo run -p otell -- metrics list --since 15m
+```
+
+Resolve a previously printed handle:
+
+```bash
+cargo run -p otell -- handle <base64-handle>
+```
+
+Query API over HTTP:
+
+```bash
+curl -sS http://127.0.0.1:1778/v1/status
+```
+
+```bash
+curl -sS -X POST http://127.0.0.1:1778/v1/search \
+  -H 'content-type: application/json' \
+  -d '{
+    "pattern":"timeout",
+    "fixed":false,
+    "ignore_case":false,
+    "service":null,
+    "trace_id":null,
+    "span_id":null,
+    "severity_gte":null,
+    "attr_filters":[],
+    "window":{"since":null,"until":null},
+    "sort":"TsAsc",
+    "limit":100,
+    "context_lines":0,
+    "context_seconds":null,
+    "count_only":false,
+    "include_stats":false
+  }'
+```
+
 ## JSON mode
 
 All query commands support global `--json` output:
@@ -79,20 +144,24 @@ cargo run -p otell -- --json search "error" --since 10m
 
 `otell mcp` reads one JSON request per line from stdin and writes one JSON response per line to stdout.
 
-Supported tools:
+Supported tool calls:
 
 - `search`
 - `trace`
 - `span`
 - `traces`
 - `metrics`
+- `metrics.list`
 - `status`
+- `resolve_handle`
 
 Example:
 
 ```bash
-printf '{"tool":"status","args":{}}\n' | cargo run -p otell -- mcp
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n' | cargo run -p otell -- mcp
 ```
+
+Legacy JSONL tool mode (`{"tool":"...","args":...}`) is still accepted.
 
 ## Project layout
 
