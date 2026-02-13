@@ -32,8 +32,8 @@ mod tests {
 
     #[test]
     fn parses_rfc3339() {
-        let ts = parse_time_or_relative("2026-01-01T00:00:00Z").unwrap();
-        assert_eq!(ts.to_rfc3339(), "2026-01-01T00:00:00+00:00");
+        let ts = parse_time_or_relative("2026-01-02T00:00:00Z").unwrap();
+        assert_eq!(ts.to_rfc3339(), "2026-01-02T00:00:00+00:00");
     }
 
     #[test]
