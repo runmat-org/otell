@@ -2,6 +2,7 @@ mod client;
 mod output;
 mod protocol;
 mod query_server;
+mod telemetry;
 
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -16,9 +17,10 @@ use otell_core::query::{
     TraceRequest, TracesRequest,
 };
 use otell_core::time::{parse_duration_str, parse_time_or_relative};
+use otell_ingest::forward::{ForwardConfig, ForwardProtocol};
 use otell_ingest::pipeline::PipelineConfig;
+use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tracing_subscriber::EnvFilter;
 
 use crate::client::QueryClient;
 use crate::output::{
@@ -26,6 +28,9 @@ use crate::output::{
     print_status_human, print_trace_human, print_traces_human,
 };
 use crate::protocol::{ApiRequest, ApiResponse};
+use crate::telemetry::{
+    SelfObserveMode, TelemetryConfig, init_cli_tracing, init_run_tracing, shutdown_tracing,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "otell")]
@@ -139,6 +144,24 @@ enum Commands {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
+    #[command(about = "Stream matching logs in real time")]
+    Tail {
+        pattern: Option<String>,
+        #[arg(long)]
+        fixed: bool,
+        #[arg(short = 'i', long)]
+        ignore_case: bool,
+        #[arg(long)]
+        service: Option<String>,
+        #[arg(long)]
+        trace: Option<String>,
+        #[arg(long)]
+        span: Option<String>,
+        #[arg(long)]
+        severity: Option<String>,
+        #[arg(long)]
+        http_addr: Option<String>,
+    },
     Status,
     #[command(about = "Execute a previously emitted handle")]
     Handle {
@@ -154,11 +177,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_target(false)
-        .init();
-
     let cli = Cli::parse();
 
     match cli.command {
@@ -170,6 +188,9 @@ async fn main() -> anyhow::Result<()> {
             query_http_addr,
             query_uds_path,
         } => {
+            let telemetry_cfg = TelemetryConfig {
+                self_observe: SelfObserveMode::from_env(),
+            };
             run_server(
                 db_path,
                 otlp_grpc_addr,
@@ -177,6 +198,7 @@ async fn main() -> anyhow::Result<()> {
                 query_tcp_addr,
                 query_http_addr,
                 query_uds_path,
+                telemetry_cfg,
             )
             .await
         }
@@ -197,6 +219,7 @@ async fn main() -> anyhow::Result<()> {
             limit,
             sort,
         } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let (context_lines, context_seconds) = parse_context(context)?;
             let req = SearchRequest {
@@ -233,6 +256,7 @@ async fn main() -> anyhow::Result<()> {
             root,
             logs,
         } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let req = TraceRequest {
                 trace_id,
@@ -253,6 +277,7 @@ async fn main() -> anyhow::Result<()> {
             span_id,
             logs,
         } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let req = SpanRequest {
                 trace_id,
@@ -276,6 +301,7 @@ async fn main() -> anyhow::Result<()> {
             limit,
             sort,
         } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let req = TracesRequest {
                 service,
@@ -302,6 +328,7 @@ async fn main() -> anyhow::Result<()> {
             agg,
             limit,
         } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let api_req = if matches!(name.as_deref(), None | Some("list")) {
                 ApiRequest::MetricsList(MetricsListRequest {
@@ -327,7 +354,34 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Commands::Tail {
+            pattern,
+            fixed,
+            ignore_case,
+            service,
+            trace,
+            span,
+            severity,
+            http_addr,
+        } => {
+            init_cli_tracing();
+            run_tail(TailQueryParams {
+                pattern,
+                fixed,
+                ignore_case,
+                service,
+                trace_id: trace,
+                span_id: span,
+                severity,
+                addr: http_addr
+                    .or(cli.addr)
+                    .or_else(|| std::env::var("OTELL_QUERY_HTTP_ADDR").ok())
+                    .unwrap_or_else(|| "127.0.0.1:1778".to_string()),
+            })
+            .await
+        }
         Commands::Status => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let api_req = ApiRequest::Status;
             let handle = encode_handle(&api_req)?;
@@ -339,15 +393,96 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Handle { handle } => {
+            init_cli_tracing();
             let mut client = QueryClient::connect(cli.uds, cli.addr).await?;
             let req = decode_handle(&handle)?;
             let response = client.request(req).await?;
             print_response(response, cli.json)?;
             Ok(())
         }
-        Commands::Intro { human } => run_intro(cli.uds, cli.addr, cli.json, human).await,
-        Commands::Mcp => run_mcp(cli.uds, cli.addr).await,
+        Commands::Intro { human } => {
+            init_cli_tracing();
+            run_intro(cli.uds, cli.addr, cli.json, human).await
+        }
+        Commands::Mcp => {
+            init_cli_tracing();
+            run_mcp(cli.uds, cli.addr).await
+        }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TailQueryParams {
+    pattern: Option<String>,
+    fixed: bool,
+    ignore_case: bool,
+    service: Option<String>,
+    trace_id: Option<String>,
+    span_id: Option<String>,
+    severity: Option<String>,
+    #[serde(skip_serializing)]
+    addr: String,
+}
+
+async fn run_tail(params: TailQueryParams) -> anyhow::Result<()> {
+    let url = format!("http://{}/v1/tail", params.addr);
+    let client = reqwest::Client::new();
+    let mut response = client
+        .get(url)
+        .query(&params)
+        .send()
+        .await
+        .context("open tail stream")?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "tail stream request failed with status {}",
+            response.status()
+        );
+    }
+
+    let mut buffer = String::new();
+    while let Some(chunk) = response.chunk().await.context("read tail stream chunk")? {
+        let text = std::str::from_utf8(&chunk).context("tail stream contained invalid utf8")?;
+        buffer.push_str(text);
+
+        while let Some(frame_end) = buffer.find("\n\n") {
+            let frame = buffer[..frame_end].to_string();
+            buffer.drain(..frame_end + 2);
+
+            for line in frame.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(record) =
+                        serde_json::from_str::<otell_core::model::log::LogRecord>(data)
+                {
+                    print_tail_record(&record);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_tail_record(record: &otell_core::model::log::LogRecord) {
+    use owo_colors::OwoColorize;
+
+    let sev = match record.severity {
+        1..=4 => "TRACE".blue().to_string(),
+        5..=8 => "DEBUG".bright_black().to_string(),
+        9..=12 => "INFO".green().to_string(),
+        13..=16 => "WARN".yellow().to_string(),
+        17..=20 => "ERROR".red().to_string(),
+        _ => "FATAL".magenta().to_string(),
+    };
+
+    println!(
+        "{} {} {} | {}",
+        record.ts.to_rfc3339(),
+        record.service.cyan(),
+        sev,
+        record.body
+    );
 }
 
 async fn run_intro(
@@ -599,6 +734,7 @@ async fn run_server(
     query_tcp_addr: Option<String>,
     query_http_addr: Option<String>,
     query_uds_path: Option<PathBuf>,
+    telemetry_cfg: TelemetryConfig,
 ) -> anyhow::Result<()> {
     let mut cfg = Config::from_env().context("load config from env")?;
     if let Some(v) = db_path {
@@ -621,6 +757,7 @@ async fn run_server(
     }
 
     let store = otell_store::Store::open(&cfg.db_path)?;
+    init_run_tracing(telemetry_cfg, Some(store.clone()));
 
     let grpc_addr = cfg.otlp_grpc_addr.parse()?;
     let http_addr = cfg.otlp_http_addr.parse()?;
@@ -634,6 +771,12 @@ async fn run_server(
             flush_interval: std::time::Duration::from_millis(cfg.write_flush_ms),
             batch_size: cfg.write_batch_size,
         },
+        cfg.forward_otlp_endpoint
+            .clone()
+            .map(|endpoint| ForwardConfig {
+                endpoint,
+                protocol: ForwardProtocol::parse(&cfg.forward_otlp_protocol),
+            }),
     ));
 
     let query_task = tokio::spawn(query_server::run_query_server(
@@ -678,6 +821,7 @@ async fn run_server(
     }
 
     retention_task.abort();
+    shutdown_tracing();
     Ok(())
 }
 

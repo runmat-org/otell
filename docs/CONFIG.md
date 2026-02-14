@@ -39,6 +39,36 @@ Configuration is loaded from environment variables, then optionally overridden b
   - coarse DB size cap for pruning
   - default: `2147483648` (2 GiB)
 
+- `OTELL_SELF_OBSERVE`
+  - controls whether `otell` runtime logs/spans are written back into local store
+  - values: `off` (default), `store`, `both`
+  - `store`: direct in-process write (no transport)
+  - `both`: in-process write + OTLP exporter (if OTEL exporter env is set)
+
+- `OTELL_FORWARD_OTLP_ENDPOINT`
+  - optional upstream collector endpoint for forwarding inbound telemetry
+  - examples:
+    - gRPC: `http://127.0.0.1:4317`
+    - HTTP protobuf: `http://127.0.0.1:4318`
+
+- `OTELL_FORWARD_OTLP_PROTOCOL`
+  - forwarding transport for inbound telemetry
+  - values: `grpc` (default), `http/protobuf`
+
+## OTEL exporter env support
+
+`otell` uses OpenTelemetry exporter env conventions for outbound trace export.
+
+Most common:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_PROTOCOL`
+- `OTEL_EXPORTER_OTLP_HEADERS`
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, `otell` enables outbound trace export for otell's own runtime tracing via `tracing-opentelemetry`.
+
+Inbound telemetry forwarding is controlled separately by `OTELL_FORWARD_OTLP_ENDPOINT` + `OTELL_FORWARD_OTLP_PROTOCOL`.
+
 ## Runtime write settings
 
 Current defaults (internal, not env-tunable in this version):

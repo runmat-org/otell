@@ -5,6 +5,7 @@ use otell_core::query::{
     MetricsListResponse, MetricsResponse, SearchResponse, SpanResponse, StatusResponse,
     TraceListItem, TraceResponse,
 };
+use owo_colors::OwoColorize;
 
 pub fn print_search_human(v: &SearchResponse) {
     for row in &v.records {
@@ -13,8 +14,8 @@ pub fn print_search_human(v: &SearchResponse) {
         let span = row.span_id.clone().unwrap_or_else(|| "-".to_string());
         println!(
             "{ts} {} {} trace={} span={} | {} {}",
-            row.service,
-            severity_label(row.severity),
+            row.service.cyan(),
+            severity_colored(row.severity),
             trace,
             span,
             row.body,
@@ -40,7 +41,7 @@ pub fn print_trace_human(v: &TraceResponse) {
     let errors = v.spans.iter().filter(|s| s.status == "ERROR").count();
     println!(
         "TRACE {} duration={}ms spans={} errors={}",
-        v.trace_id,
+        v.trace_id.bright_white(),
         duration_ms,
         v.spans.len(),
         errors
@@ -55,8 +56,8 @@ pub fn print_trace_human(v: &TraceResponse) {
         println!(
             "{} {} {} | {}",
             log.ts.to_rfc3339_opts(SecondsFormat::Millis, true),
-            log.service,
-            severity_label(log.severity),
+            log.service.cyan(),
+            severity_colored(log.severity),
             log.body
         );
     }
@@ -81,7 +82,7 @@ pub fn print_span_human(v: &SpanResponse) {
         println!(
             "{} {} | {}",
             log.ts.to_rfc3339_opts(SecondsFormat::Millis, true),
-            severity_label(log.severity),
+            severity_colored(log.severity),
             log.body
         );
     }
@@ -148,6 +149,17 @@ fn severity_label(level: i32) -> &'static str {
     }
 }
 
+fn severity_colored(level: i32) -> String {
+    match severity_label(level) {
+        "TRACE" => "TRACE".blue().to_string(),
+        "DEBUG" => "DEBUG".bright_black().to_string(),
+        "INFO" => "INFO".green().to_string(),
+        "WARN" => "WARN".yellow().to_string(),
+        "ERROR" => "ERROR".red().to_string(),
+        _ => "FATAL".magenta().to_string(),
+    }
+}
+
 fn print_span_tree(spans: &[otell_core::model::span::SpanRecord]) {
     let mut children: HashMap<Option<String>, Vec<&otell_core::model::span::SpanRecord>> =
         HashMap::new();
@@ -173,10 +185,14 @@ fn print_node(
     println!(
         "{}{} {} ({}ms) {}",
         indent,
-        span.service,
+        span.service.cyan(),
         span.name,
         span.duration_ms(),
-        span.status
+        if span.status == "ERROR" {
+            span.status.red().to_string()
+        } else {
+            span.status.green().to_string()
+        }
     );
 
     if let Some(kids) = children.get(&Some(span.span_id.clone())) {

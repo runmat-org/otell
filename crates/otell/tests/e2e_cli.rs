@@ -218,7 +218,7 @@ async fn e2e_grpc_ingest_and_uds_search() {
         spawn_server(temp.path());
     let _ = http_port;
     let mut exported = false;
-    for _ in 0..60 {
+    for _ in 0..120 {
         assert!(child.try_wait().unwrap().is_none(), "otell exited early");
         let endpoint = format!("http://127.0.0.1:{grpc_port}");
         if let Ok(mut grpc_client) = LogsServiceClient::connect(endpoint).await

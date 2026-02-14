@@ -20,18 +20,21 @@ use opentelemetry_proto::tonic::collector::trace::v1::{
 };
 use tonic::{Request, Response, Status};
 
+use crate::forward::Forwarder;
 use crate::otlp::decode::{decode_log, decode_metric, decode_span};
 use crate::pipeline::Pipeline;
 
 #[derive(Clone)]
 pub struct GrpcIngest {
     pipeline: Arc<Pipeline>,
+    forwarder: Option<Forwarder>,
 }
 
 impl GrpcIngest {
-    pub fn new(pipeline: Pipeline) -> Self {
+    pub fn new(pipeline: Pipeline, forwarder: Option<Forwarder>) -> Self {
         Self {
             pipeline: Arc::new(pipeline),
+            forwarder,
         }
     }
 
@@ -55,6 +58,9 @@ impl LogsService for GrpcIngest {
         request: Request<ExportLogsServiceRequest>,
     ) -> std::result::Result<Response<ExportLogsServiceResponse>, Status> {
         let req = request.into_inner();
+        if let Some(forwarder) = &self.forwarder {
+            forwarder.submit_logs(req.clone()).await;
+        }
         let mut logs = Vec::new();
         for rl in req.resource_logs {
             let resource = rl.resource.as_ref();
@@ -65,6 +71,7 @@ impl LogsService for GrpcIngest {
                 }
             }
         }
+        tracing::debug!(count = logs.len(), "otlp grpc logs accepted");
         self.pipeline.submit_logs(logs).await;
         Ok(Response::new(ExportLogsServiceResponse::default()))
     }
@@ -77,6 +84,9 @@ impl TraceService for GrpcIngest {
         request: Request<ExportTraceServiceRequest>,
     ) -> std::result::Result<Response<ExportTraceServiceResponse>, Status> {
         let req = request.into_inner();
+        if let Some(forwarder) = &self.forwarder {
+            forwarder.submit_traces(req.clone()).await;
+        }
         let mut spans = Vec::new();
         for rs in req.resource_spans {
             let resource = rs.resource.as_ref();
@@ -86,6 +96,7 @@ impl TraceService for GrpcIngest {
                 }
             }
         }
+        tracing::debug!(count = spans.len(), "otlp grpc traces accepted");
         self.pipeline.submit_spans(spans).await;
         Ok(Response::new(ExportTraceServiceResponse::default()))
     }
@@ -98,6 +109,9 @@ impl MetricsService for GrpcIngest {
         request: Request<ExportMetricsServiceRequest>,
     ) -> std::result::Result<Response<ExportMetricsServiceResponse>, Status> {
         let req = request.into_inner();
+        if let Some(forwarder) = &self.forwarder {
+            forwarder.submit_metrics(req.clone()).await;
+        }
         let mut points = Vec::new();
         for rm in req.resource_metrics {
             let resource = rm.resource.as_ref();
@@ -121,6 +135,7 @@ impl MetricsService for GrpcIngest {
                 }
             }
         }
+        tracing::debug!(count = points.len(), "otlp grpc metrics accepted");
         self.pipeline.submit_metrics(points).await;
         Ok(Response::new(ExportMetricsServiceResponse::default()))
     }

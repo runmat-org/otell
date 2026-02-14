@@ -41,7 +41,12 @@ impl Store {
         }
 
         tx.commit()
-            .map_err(|e| OtellError::Store(format!("commit logs failed: {e}")))
+            .map_err(|e| OtellError::Store(format!("commit logs failed: {e}")))?;
+
+        for log in logs {
+            self.publish_log(log.clone());
+        }
+        Ok(())
     }
 
     pub fn insert_spans(&self, spans: &[SpanRecord]) -> Result<()> {

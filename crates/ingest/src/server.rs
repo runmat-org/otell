@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use otell_core::error::{OtellError, Result};
 use tonic::transport::Server;
 
+use crate::forward::{ForwardConfig, build_forwarder};
 use crate::otlp::grpc::GrpcIngest;
 use crate::otlp::http;
 use crate::pipeline::{Pipeline, PipelineConfig};
@@ -12,10 +13,15 @@ pub async fn run_ingest_servers(
     grpc_addr: SocketAddr,
     http_addr: SocketAddr,
     cfg: PipelineConfig,
+    forward_cfg: Option<ForwardConfig>,
 ) -> Result<()> {
+    tracing::info!(addr = %grpc_addr, "otlp gRPC ingest server listening");
+    tracing::info!(addr = %http_addr, "otlp HTTP ingest server listening");
+
     let pipeline = Pipeline::new(store, cfg);
-    let grpc = GrpcIngest::new(pipeline.clone());
-    let http_router = http::router(pipeline);
+    let forwarder = build_forwarder(forward_cfg);
+    let grpc = GrpcIngest::new(pipeline.clone(), forwarder.clone());
+    let http_router = http::router(pipeline, forwarder);
 
     let grpc_task = tokio::spawn(async move {
         Server::builder()

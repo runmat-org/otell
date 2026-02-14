@@ -18,6 +18,8 @@ pub struct Config {
     pub retention_max_bytes: u64,
     pub write_batch_size: usize,
     pub write_flush_ms: u64,
+    pub forward_otlp_endpoint: Option<String>,
+    pub forward_otlp_protocol: String,
 }
 
 impl Default for Config {
@@ -46,6 +48,8 @@ impl Default for Config {
             retention_max_bytes: 2 * 1024 * 1024 * 1024,
             write_batch_size: 2048,
             write_flush_ms: 200,
+            forward_otlp_endpoint: None,
+            forward_otlp_protocol: "grpc".to_string(),
         }
     }
 }
@@ -80,6 +84,12 @@ impl Config {
             cfg.retention_max_bytes = v
                 .parse::<u64>()
                 .map_err(|e| OtellError::Config(format!("bad OTELL_RETENTION_MAX_BYTES: {e}")))?;
+        }
+        if let Ok(v) = env::var("OTELL_FORWARD_OTLP_ENDPOINT") {
+            cfg.forward_otlp_endpoint = Some(v);
+        }
+        if let Ok(v) = env::var("OTELL_FORWARD_OTLP_PROTOCOL") {
+            cfg.forward_otlp_protocol = v;
         }
 
         Ok(cfg)

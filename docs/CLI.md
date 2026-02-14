@@ -164,6 +164,24 @@ group=api value=182.4
 handle=eyJNZXRyaWNzIjp7Im5hbWUiOiJodHRwLnNlcnZlci5kdXJhdGlvbiIsLi4ufX0=
 ```
 
+`otell tail [pattern]`
+
+- Streams matching logs in real time using server push (SSE, no polling).
+- Flags: `--fixed`, `-i/--ignore-case`, `--service`, `--trace`, `--span`, `--severity`, `--http-addr`
+
+Example:
+
+```bash
+otell tail timeout --service api --severity WARN
+```
+
+Example output:
+
+```text
+2026-02-12T20:25:01.331Z api WARN | retrying attempt=2
+2026-02-12T20:25:02.004Z api ERROR | context deadline exceeded
+```
+
 `otell status`
 
 - Returns DB health + counts + oldest/newest timestamps.

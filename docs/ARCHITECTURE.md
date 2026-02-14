@@ -24,7 +24,20 @@ All data is stored in one DuckDB database.
 2. OTLP payload is decoded into internal records (`LogRecord`, `SpanRecord`, `MetricPoint`).
 3. Records are sent into async batch pipelines.
 4. Batched writes are committed to DuckDB.
-5. Query requests execute deterministic store queries and return structured responses.
+5. Optional forwarder can tee inbound OTLP payloads to an upstream collector.
+6. Query requests execute deterministic store queries and return structured responses.
+
+## Runtime telemetry and instrumentation
+
+`otell` uses `tracing` as the single instrumentation API.
+
+- HTTP servers (ingest + query) are instrumented with `tower-http::TraceLayer`.
+- CLI/runtime logs are emitted via `tracing_subscriber` fmt layer.
+- Optional OTLP export is enabled when OTEL exporter env vars are set.
+- Optional in-process self-observe sink writes `otell` events/spans into DuckDB (`OTELL_SELF_OBSERVE=store|both`).
+- Optional inbound forwarding can tee received OTLP requests to another collector (`OTELL_FORWARD_OTLP_*`).
+
+This keeps one consistent signal path while allowing multiple sinks (stderr, OTLP, local store).
 
 ## Crate responsibilities
 

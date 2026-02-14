@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use duckdb::Connection;
 use otell_core::error::{OtellError, Result};
+use otell_core::model::log::LogRecord;
 use otell_core::query::StatusResponse;
+use tokio::sync::broadcast;
 
 use crate::schema::SCHEMA_SQL;
 
@@ -13,6 +15,7 @@ use crate::schema::SCHEMA_SQL;
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
     db_path: String,
+    log_tx: broadcast::Sender<LogRecord>,
 }
 
 impl Store {
@@ -29,9 +32,12 @@ impl Store {
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| OtellError::Store(format!("failed to initialize schema: {e}")))?;
 
+        let (log_tx, _) = broadcast::channel(8192);
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path: path.display().to_string(),
+            log_tx,
         })
     }
 
@@ -40,9 +46,11 @@ impl Store {
             .map_err(|e| OtellError::Store(format!("failed to open in-memory db: {e}")))?;
         conn.execute_batch(SCHEMA_SQL)
             .map_err(|e| OtellError::Store(format!("failed to initialize schema: {e}")))?;
+        let (log_tx, _) = broadcast::channel(8192);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path: ":memory:".to_string(),
+            log_tx,
         })
     }
 
@@ -75,6 +83,14 @@ impl Store {
             oldest_ts,
             newest_ts,
         })
+    }
+
+    pub fn subscribe_logs(&self) -> broadcast::Receiver<LogRecord> {
+        self.log_tx.subscribe()
+    }
+
+    pub(crate) fn publish_log(&self, record: LogRecord) {
+        let _ = self.log_tx.send(record);
     }
 }
 
