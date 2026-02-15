@@ -16,7 +16,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-otell-core = { version = "0.2.0", path = "../core" }
+otell-core = { version = "0.2.1", path = "../core" }
 
 [dev-dependencies]
 anyhow.workspace = true

@@ -31,9 +31,9 @@ tracing.workspace = true
 tracing-opentelemetry.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
-otell-core = { version = "0.2.0", path = "../core" }
-otell-ingest = { version = "0.2.0", path = "../ingest" }
-otell-store = { version = "0.2.0", path = "../store" }
+otell-core = { version = "0.2.1", path = "../core" }
+otell-ingest = { version = "0.2.1", path = "../ingest" }
+otell-store = { version = "0.2.1", path = "../store" }
 
 [dev-dependencies]
 anyhow.workspace = true
