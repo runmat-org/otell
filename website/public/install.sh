@@ -56,7 +56,7 @@ if [ -z "$TAG" ]; then
   exit 1
 fi
 
-ASSET="otell-${TAG}-${TARGET_SUFFIX}.tar.gz"
+ASSET="${TAG}-${TARGET_SUFFIX}.tar.gz"
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
 TMP_DIR="$(mktemp -d)"
@@ -68,7 +68,7 @@ curl -fL "$DOWNLOAD_URL" -o "$TMP_DIR/$ASSET"
 printf "Extracting archive...\n"
 tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR"
 
-BIN_PATH="$TMP_DIR/otell-${TAG}-${TARGET_SUFFIX}/otell"
+BIN_PATH="$TMP_DIR/${TAG}-${TARGET_SUFFIX}/otell"
 if [ ! -f "$BIN_PATH" ]; then
   printf "error: extracted binary not found at %s\n" "$BIN_PATH" >&2
   exit 1

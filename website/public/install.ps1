@@ -21,7 +21,7 @@ if ($arch -ne "AMD64") {
 }
 
 $suffix = "windows-x86_64"
-$asset = "otell-$tag-$suffix.zip"
+$asset = "$tag-$suffix.zip"
 $downloadUrl = "https://github.com/$repo/releases/download/$tag/$asset"
 
 $tempDir = Join-Path $env:TEMP ("otell-install-" + [guid]::NewGuid().ToString("N"))
@@ -35,7 +35,7 @@ try {
   Write-Host "Extracting archive..."
   Expand-Archive -Path $archivePath -DestinationPath $tempDir -Force
 
-  $binaryPath = Join-Path $tempDir ("otell-$tag-$suffix\otell.exe")
+  $binaryPath = Join-Path $tempDir ("$tag-$suffix\otell.exe")
   if (-not (Test-Path $binaryPath)) {
     throw "Extracted binary not found at $binaryPath"
   }
