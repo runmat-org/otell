@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/runmat-org/otell/compare/otell-core-v0.1.0...otell-core-v0.2.0) - 2026-02-15
+
+### Other
+
+- adding self logging and tracing
+
 ## [0.1.0](https://github.com/runmat-org/otell/releases/tag/otell-core-v0.1.0) - 2026-02-13
 
 ### Other

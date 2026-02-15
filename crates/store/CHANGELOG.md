@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/runmat-org/otell/compare/otell-store-v0.1.0...otell-store-v0.2.0) - 2026-02-15
+
+### Other
+
+- adding self-telemetry + a bit better agent onboarding output
+- adding self logging and tracing
+
 ## [0.1.0](https://github.com/runmat-org/otell/releases/tag/otell-store-v0.1.0) - 2026-02-12
 
 ### Other
