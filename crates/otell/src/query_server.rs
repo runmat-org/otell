@@ -124,18 +124,21 @@ async fn handle_stream<T>(mut stream: BufReader<T>, store: otell_store::Store) -
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let mut line = String::new();
-    let n = stream.read_line(&mut line).await?;
-    if n == 0 {
-        return Ok(());
+    loop {
+        let mut line = String::new();
+        let n = stream.read_line(&mut line).await?;
+        if n == 0 {
+            break;
+        }
+
+        let req: ApiRequest = serde_json::from_str(&line)?;
+        let response = handle_request(req, &store);
+        let payload = serde_json::to_vec(&response)?;
+        stream.get_mut().write_all(&payload).await?;
+        stream.get_mut().write_all(b"\n").await?;
+        stream.get_mut().flush().await?;
     }
 
-    let req: ApiRequest = serde_json::from_str(&line)?;
-    let response = handle_request(req, &store);
-    let payload = serde_json::to_vec(&response)?;
-    stream.get_mut().write_all(&payload).await?;
-    stream.get_mut().write_all(b"\n").await?;
-    stream.get_mut().flush().await?;
     Ok(())
 }
 
@@ -265,6 +268,7 @@ async fn http_tail(
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    tracing::warn!("tail stream lagged; dropping stale events");
                     continue;
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {

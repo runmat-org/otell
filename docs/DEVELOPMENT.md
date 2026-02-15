@@ -17,6 +17,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+Run the manual stress test (ingest/query pressure):
+
+```bash
+cargo test -p otell --test stress -- --ignored
+```
+
 Run otell locally:
 
 ```bash

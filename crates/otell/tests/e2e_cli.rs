@@ -353,8 +353,13 @@ fn mcp_rejects_legacy_tool_shape() {
 
 #[test]
 fn intro_without_server_guides_startup() {
-    let output = Command::new(bin()).arg("intro").output().unwrap();
+    let output = Command::new(bin())
+        .arg("intro")
+        .arg("--addr")
+        .arg("127.0.0.1:1")
+        .output()
+        .unwrap();
     let out = String::from_utf8_lossy(&output.stdout);
-    assert!(out.contains("connected=false"));
+    assert!(out.contains("connected to running `otell run`: `false`"));
     assert!(out.contains("otell run"));
 }

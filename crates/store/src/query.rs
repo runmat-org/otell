@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use duckdb::params;
+use duckdb::{params, params_from_iter};
 use otell_core::error::{OtellError, Result};
 use otell_core::filter::SortOrder;
 use otell_core::model::log::LogRecord;
@@ -307,16 +307,54 @@ impl Store {
 
     fn fetch_logs_candidates(&self, req: &SearchRequest) -> Result<Vec<LogRecord>> {
         let conn = self.conn();
+
+        let mut where_parts = Vec::new();
+        let mut args: Vec<duckdb::types::Value> = Vec::new();
+
+        if let Some(service) = &req.service {
+            where_parts.push("service = ?");
+            args.push(duckdb::types::Value::Text(service.clone()));
+        }
+        if let Some(trace_id) = &req.trace_id {
+            where_parts.push("trace_id = ?");
+            args.push(duckdb::types::Value::Text(trace_id.clone()));
+        }
+        if let Some(span_id) = &req.span_id {
+            where_parts.push("span_id = ?");
+            args.push(duckdb::types::Value::Text(span_id.clone()));
+        }
+        if let Some(severity) = req.severity_gte {
+            where_parts.push("severity >= ?");
+            args.push(duckdb::types::Value::Int(severity as i32));
+        }
+        if let Some(since) = req.window.since {
+            where_parts.push("ts >= ?");
+            args.push(duckdb::types::Value::Text(since.to_rfc3339()));
+        }
+        if let Some(until) = req.window.until {
+            where_parts.push("ts <= ?");
+            args.push(duckdb::types::Value::Text(until.to_rfc3339()));
+        }
+
+        let where_sql = if where_parts.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_parts.join(" AND "))
+        };
+
+        let sql = format!(
+            "SELECT ts, service, severity, trace_id, span_id, body, attrs_json, attrs_text
+             FROM logs
+             {where_sql}
+             ORDER BY ts ASC"
+        );
+
         let mut stmt = conn
-            .prepare(
-                "SELECT ts, service, severity, trace_id, span_id, body, attrs_json, attrs_text
-                 FROM logs
-                 ORDER BY ts ASC",
-            )
+            .prepare(&sql)
             .map_err(|e| OtellError::Store(format!("prepare search failed: {e}")))?;
 
         let rows = stmt
-            .query_map([], |row| {
+            .query_map(params_from_iter(args.iter()), |row| {
                 Ok(LogRecord {
                     ts: naive_to_utc(row.get::<_, NaiveDateTime>(0)?),
                     service: row.get::<_, String>(1)?,
@@ -334,29 +372,6 @@ impl Store {
         for row in rows {
             let record =
                 row.map_err(|e| OtellError::Store(format!("map search row failed: {e}")))?;
-            if !in_window(record.ts, &req.window.since, &req.window.until) {
-                continue;
-            }
-            if let Some(service) = &req.service
-                && record.service != *service
-            {
-                continue;
-            }
-            if let Some(trace_id) = &req.trace_id
-                && record.trace_id.as_deref() != Some(trace_id.as_str())
-            {
-                continue;
-            }
-            if let Some(span_id) = &req.span_id
-                && record.span_id.as_deref() != Some(span_id.as_str())
-            {
-                continue;
-            }
-            if let Some(severity) = req.severity_gte
-                && record.severity < severity as i32
-            {
-                continue;
-            }
             if !matches_attr_filters(&record.attrs_json, &req.attr_filters) {
                 continue;
             }

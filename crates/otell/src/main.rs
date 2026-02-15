@@ -491,100 +491,199 @@ async fn run_intro(
     json: bool,
     human: bool,
 ) -> anyhow::Result<()> {
-    let mut client = match QueryClient::connect(uds, addr).await {
-        Ok(c) => c,
-        Err(err) => {
-            if json {
-                let payload = serde_json::json!({
-                    "mode": if human {"human"} else {"llm"},
-                    "connected": false,
-                    "error": err.to_string(),
-                    "next": [
-                        "start server: otell run",
-                        "then rerun: otell intro"
-                    ]
-                });
-                println!("{}", serde_json::to_string_pretty(&payload)?);
-            } else if human {
-                println!("Could not connect to otell query server: {err}");
-                println!("Start it with: otell run");
-                println!("Then run: otell intro");
-            } else {
-                println!("INTRO mode=llm connected=false");
-                println!("error={err}");
-                println!("next=run `otell run` then `otell intro`");
-            }
-            return Ok(());
-        }
-    };
+    let cfg = otell_core::config::Config::from_env().unwrap_or_default();
+    let intro_commands = vec![
+        "otell run",
+        "otell intro",
+        "otell search \"error|timeout\" --since 15m --stats",
+        "otell traces --since 15m --limit 20",
+        "otell trace <trace_id>",
+        "otell span <trace_id> <span_id>",
+        "otell tail timeout --service api --severity WARN",
+        "otell handle <base64>",
+    ];
 
-    let status = client.request(ApiRequest::Status).await?;
-    let metrics = client
-        .request(ApiRequest::MetricsList(MetricsListRequest {
-            service: None,
-            window: TimeWindow::all(),
-            limit: 5,
-        }))
-        .await?;
-    let search = client
-        .request(ApiRequest::Search(SearchRequest {
-            pattern: Some("error|timeout".to_string()),
-            include_stats: true,
-            count_only: true,
-            limit: 100,
-            ..SearchRequest::default()
-        }))
-        .await?;
+    let (mut client_opt, connect_error): (Option<QueryClient>, Option<String>) =
+        match connect_with_retry(uds, addr).await {
+            Ok(c) => (Some(c), None),
+            Err(err) => (None, Some(err.to_string())),
+        };
+
+    let connected = client_opt.is_some();
+    let mut status: Option<ApiResponse> = None;
+    let mut metrics: Option<ApiResponse> = None;
+    let mut search: Option<ApiResponse> = None;
+
+    if let Some(client) = client_opt.as_mut() {
+        status = client.request(ApiRequest::Status).await.ok();
+        metrics = client
+            .request(ApiRequest::MetricsList(MetricsListRequest {
+                service: None,
+                window: TimeWindow::all(),
+                limit: 5,
+            }))
+            .await
+            .ok();
+        search = client
+            .request(ApiRequest::Search(SearchRequest {
+                pattern: Some("error|timeout".to_string()),
+                include_stats: true,
+                count_only: true,
+                limit: 100,
+                ..SearchRequest::default()
+            }))
+            .await
+            .ok();
+    }
 
     if json {
         let payload = serde_json::json!({
             "mode": if human {"human"} else {"llm"},
-            "connected": true,
+            "what_is_otell": "local OpenTelemetry ingest + query utility for logs, traces, and metrics",
+            "connected": connected,
+            "endpoints": {
+                "ingest_grpc": cfg.otlp_grpc_addr,
+                "ingest_http": cfg.otlp_http_addr,
+                "query_uds": cfg.uds_path,
+                "query_tcp": cfg.query_tcp_addr,
+                "query_http": cfg.query_http_addr,
+            },
+            "instance_state": {
+                "running": connected,
+                "connect_error": connect_error,
+            },
+            "workflow": [
+                "search logs for signal",
+                "list traces in window",
+                "inspect one trace",
+                "inspect one span",
+                "tail live logs",
+                "reuse handles in agent loops"
+            ],
             "probes": {
                 "status": status,
                 "metrics_list": metrics,
                 "search_count_stats": search,
             },
-            "next": [
-                "otell traces --since 15m --limit 20",
-                "otell trace <trace_id>",
-                "otell span <trace_id> <span_id>",
-                "reuse handle: otell handle <base64>"
-            ]
+            "next_commands": intro_commands,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
     }
 
-    if human {
-        println!("otell intro");
-        println!("- connected to local query server");
-        println!("- probe 1: status (dataset health)");
-        print_response(status, false)?;
-        println!("- probe 2: metrics list (what telemetry names exist)");
-        print_response(metrics, false)?;
-        println!("- probe 3: search count/stats for error signals");
-        print_response(search, false)?;
-        println!("next:");
-        println!("1) otell traces --since 15m --limit 20");
-        println!("2) otell trace <trace_id>");
-        println!("3) otell span <trace_id> <span_id>");
-        println!("4) otell handle <base64>");
-    } else {
-        println!("INTRO mode=llm connected=true");
-        println!("probe=status");
-        print_response(status, false)?;
-        println!("probe=metrics_list");
-        print_response(metrics, false)?;
-        println!("probe=search_count_stats pattern=error|timeout");
-        print_response(search, false)?;
-        println!("next=otell traces --since 15m --limit 20");
-        println!("next=otell trace <trace_id>");
-        println!("next=otell span <trace_id> <span_id>");
-        println!("next=otell handle <base64>");
-    }
+    let markdown = render_intro_markdown(IntroDocInput {
+        connected,
+        connect_error,
+        cfg: &cfg,
+        intro_commands: &intro_commands,
+        status: status.as_ref(),
+        metrics: metrics.as_ref(),
+        search: search.as_ref(),
+        human,
+    })?;
+    println!("{markdown}");
 
     Ok(())
+}
+
+struct IntroDocInput<'a> {
+    connected: bool,
+    connect_error: Option<String>,
+    cfg: &'a otell_core::config::Config,
+    intro_commands: &'a [&'a str],
+    status: Option<&'a ApiResponse>,
+    metrics: Option<&'a ApiResponse>,
+    search: Option<&'a ApiResponse>,
+    human: bool,
+}
+
+fn render_intro_markdown(input: IntroDocInput<'_>) -> anyhow::Result<String> {
+    let audience = if input.human { "human" } else { "llm" };
+    let mut out = String::new();
+
+    out.push_str("# otell onboarding\n\n");
+    out.push_str(&format!("_Audience mode: {audience}_\n\n"));
+    out.push_str("`otell` is a local OpenTelemetry ingest and query utility for logs, traces, and metrics. This onboarding note is designed to be read directly by a coding model or developer to quickly establish what `otell` is, what instance is available right now, and which commands to run next.\n\n");
+
+    out.push_str("## instance state\n\n");
+    out.push_str(&format!(
+        "- connected to running `otell run`: `{}`\n",
+        input.connected
+    ));
+    if let Some(err) = input.connect_error {
+        out.push_str(&format!("- connection error: `{err}`\n"));
+        out.push_str("- action: start `otell run`, then rerun `otell intro`\n");
+    }
+    out.push('\n');
+
+    out.push_str("## endpoints\n\n");
+    out.push_str(&format!("- ingest gRPC: `{}`\n", input.cfg.otlp_grpc_addr));
+    out.push_str(&format!("- ingest HTTP: `{}`\n", input.cfg.otlp_http_addr));
+    out.push_str(&format!(
+        "- query UDS: `{}`\n",
+        input.cfg.uds_path.display()
+    ));
+    out.push_str(&format!("- query TCP: `{}`\n", input.cfg.query_tcp_addr));
+    out.push_str(&format!(
+        "- query HTTP: `{}`\n\n",
+        input.cfg.query_http_addr
+    ));
+
+    out.push_str("## recommended workflow\n\n");
+    out.push_str("1. Search logs for immediate failure signals (`error`, `timeout`) and inspect aggregate stats.\n");
+    out.push_str("2. List traces in a recent window and pick one relevant trace id.\n");
+    out.push_str("3. Inspect the trace structure, then zoom into one problematic span.\n");
+    out.push_str("4. Use `tail` for real-time follow-up while reproducing the issue.\n");
+    out.push_str("5. Reuse emitted handles to replay exact queries in an agent loop.\n\n");
+
+    out.push_str("## next commands\n\n");
+    for command in input.intro_commands {
+        out.push_str(&format!("- `{command}`\n"));
+    }
+    out.push('\n');
+
+    if let Some(status) = input.status {
+        out.push_str("## live probe: status\n\n```json\n");
+        out.push_str(&serde_json::to_string_pretty(status)?);
+        out.push_str("\n```\n\n");
+    }
+    if let Some(metrics) = input.metrics {
+        out.push_str("## live probe: metrics list\n\n```json\n");
+        out.push_str(&serde_json::to_string_pretty(metrics)?);
+        out.push_str("\n```\n\n");
+    }
+    if let Some(search) = input.search {
+        out.push_str("## live probe: search count + stats\n\n```json\n");
+        out.push_str(&serde_json::to_string_pretty(search)?);
+        out.push_str("\n```\n\n");
+    }
+
+    out.push_str("## machine-use notes\n\n");
+    out.push_str("- Add `--json` to any query command for structured output.\n");
+    out.push_str(
+        "- Most query commands print `handle=...`; use `otell handle <base64>` to replay.\n",
+    );
+    out.push_str("- For local troubleshooting, run `otell status` and then `otell intro` again after state changes.\n");
+
+    Ok(out)
+}
+
+async fn connect_with_retry(
+    uds: Option<PathBuf>,
+    addr: Option<String>,
+) -> anyhow::Result<QueryClient> {
+    let mut last_err: Option<anyhow::Error> = None;
+    for _ in 0..30 {
+        match QueryClient::connect(uds.clone(), addr.clone()).await {
+            Ok(client) => return Ok(client),
+            Err(err) => {
+                last_err = Some(err);
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("failed to connect to otell query server")))
 }
 
 async fn run_mcp(uds: Option<PathBuf>, addr: Option<String>) -> anyhow::Result<()> {
@@ -758,6 +857,15 @@ async fn run_server(
 
     let store = otell_store::Store::open(&cfg.db_path)?;
     init_run_tracing(telemetry_cfg, Some(store.clone()));
+
+    eprintln!("otell run");
+    eprintln!("  db: {}", cfg.db_path.display());
+    eprintln!("  ingest grpc: {}", cfg.otlp_grpc_addr);
+    eprintln!("  ingest http: {}", cfg.otlp_http_addr);
+    eprintln!("  query uds: {}", cfg.uds_path.display());
+    eprintln!("  query tcp: {}", cfg.query_tcp_addr);
+    eprintln!("  query http: {}", cfg.query_http_addr);
+    eprintln!("  tip: run `otell intro` in another shell");
 
     let grpc_addr = cfg.otlp_grpc_addr.parse()?;
     let http_addr = cfg.otlp_http_addr.parse()?;

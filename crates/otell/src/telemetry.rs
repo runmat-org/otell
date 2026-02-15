@@ -48,8 +48,9 @@ impl SelfObserveMode {
 }
 
 pub fn init_cli_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(env_filter)
         .with_target(false)
         .with_ansi(std::io::stderr().is_terminal())
         .compact()
@@ -57,7 +58,7 @@ pub fn init_cli_tracing() {
 }
 
 pub fn init_run_tracing(cfg: TelemetryConfig, store: Option<Store>) {
-    let env_filter = EnvFilter::from_default_env();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_target(false)
         .with_ansi(std::io::stderr().is_terminal())
@@ -136,13 +137,13 @@ struct SpanStart {
 
 #[derive(Clone)]
 struct SelfObserveLayer {
-    tx: mpsc::UnboundedSender<Signal>,
+    tx: mpsc::Sender<Signal>,
     spans: Arc<Mutex<HashMap<u64, SpanStart>>>,
 }
 
 impl SelfObserveLayer {
     fn new(store: Store) -> Self {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Signal>();
+        let (tx, mut rx) = mpsc::channel::<Signal>(8192);
         tokio::spawn(async move {
             let mut logs = Vec::new();
             let mut spans = Vec::new();
@@ -220,7 +221,7 @@ where
             .message
             .unwrap_or_else(|| event.metadata().name().to_string());
 
-        let _ = self.tx.send(Signal::Log(LogRecord {
+        let _ = self.tx.try_send(Signal::Log(LogRecord {
             ts: Utc::now(),
             service: "otell".to_string(),
             severity: level,
@@ -275,7 +276,7 @@ where
             return;
         };
 
-        let _ = self.tx.send(Signal::Span(SpanRecord {
+        let _ = self.tx.try_send(Signal::Span(SpanRecord {
             trace_id: start.trace_id,
             span_id: start.span_id,
             parent_span_id: start.parent_span_id,

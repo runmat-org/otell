@@ -48,6 +48,7 @@ Paste the contents of `MODEL_QUICKSTART.md` into your AGENTS.md file or equivale
 
 ### Reference documentation
 
+- Getting started: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 - CLI reference: [docs/CLI.md](docs/CLI.md)
 - API reference: [docs/API.md](docs/API.md)
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
