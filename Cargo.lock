@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "otell"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "otell-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "glob",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "otell-ingest"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -1817,7 +1817,7 @@ dependencies = [
 
 [[package]]
 name = "otell-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "testkit"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
