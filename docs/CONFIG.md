@@ -1,8 +1,53 @@
 # Configuration
 
-Configuration is loaded from environment variables, then optionally overridden by CLI flags on `otell run`.
+Configuration now has a single load path with clear precedence:
+
+1. built-in defaults
+2. local config file (`OTELL_CONFIG` or platform default path)
+3. environment variables
+4. CLI flags on `otell run` (for bind/path flags only)
+
+This makes it easy to keep a persistent local setup (for example forwarding settings) without exporting env vars in every shell.
+
+## Config file
+
+Default path:
+
+- `${XDG_CONFIG_HOME:-$HOME/.config}/otell/config.toml`
+
+Override path:
+
+- `OTELL_CONFIG=/path/to/config.toml`
+
+If the file does not exist, `otell` continues with defaults/env.
+
+Example:
+
+```toml
+db_path = "/Users/me/.local/share/otell/otell.duckdb"
+otlp_grpc_addr = "127.0.0.1:4317"
+otlp_http_addr = "127.0.0.1:4318"
+query_tcp_addr = "127.0.0.1:1777"
+query_http_addr = "127.0.0.1:1778"
+uds_path = "/tmp/otell.sock"
+
+retention_ttl = "24h"
+retention_max_bytes = 2147483648
+write_batch_size = 2048
+write_flush_ms = 200
+
+forward_otlp_endpoint = "http://127.0.0.1:4317"
+forward_otlp_protocol = "grpc" # or "http/protobuf"
+forward_otlp_compression = "none" # or "gzip"
+forward_otlp_headers = "x-tenant=dev,authorization=Bearer abc123"
+forward_otlp_timeout = "10s"
+```
 
 ## Environment variables
+
+- `OTELL_CONFIG`
+  - optional path to config file
+  - default config file path: `${XDG_CONFIG_HOME:-$HOME/.config}/otell/config.toml`
 
 - `OTELL_DB_PATH`
   - DuckDB file path

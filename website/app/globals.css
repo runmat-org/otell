@@ -29,21 +29,6 @@ a:hover {
   text-decoration: underline;
 }
 
-.siteHeader {
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.siteHeaderInner {
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 14px 20px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .brandLink {
   color: var(--text);
   font-weight: 700;
@@ -80,6 +65,11 @@ h1 {
   font-size: 2.2rem;
 }
 
+h2 {
+  margin: 0 0 12px;
+  font-size: 1.8rem;
+}
+
 p {
   margin: 0 0 14px;
   color: var(--muted);
@@ -91,7 +81,7 @@ pre {
   font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.installPanel {
+.step-panel {
   margin: 18px 0;
   padding: 16px;
   border: 1px solid var(--border);
@@ -133,6 +123,7 @@ pre {
   border-radius: 6px;
   background: #0d131d;
   overflow-x: auto;
+  text-wrap: pretty;
 }
 
 .copyButton {
@@ -148,42 +139,14 @@ pre {
   margin-top: 10px;
 }
 
-.docContainer {
-  max-width: 940px;
-  margin: 0 auto;
-  padding: 30px 20px 54px;
-}
-
-.docArticle {
-  margin-top: 14px;
-  padding: 20px;
+.viewSourceButton {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-}
-
-.docArticle h1,
-.docArticle h2,
-.docArticle h3 {
-  margin: 20px 0 10px;
-}
-
-.docArticle h1 {
-  margin-top: 0;
-}
-
-.docArticle p,
-.docArticle li {
-  color: #d4deec;
-}
-
-.docArticle ul,
-.docArticle ol {
-  margin: 8px 0 16px 24px;
-}
-
-.docArticle pre {
-  margin: 12px 0;
+  border-radius: 6px;
+  background: #0d131d;
+  color: var(--text);
+  padding: 10px 12px;
+  cursor: pointer;
+  width: 100%;
 }
 
 @media (max-width: 720px) {

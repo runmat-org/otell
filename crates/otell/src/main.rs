@@ -491,7 +491,7 @@ async fn run_intro(
     json: bool,
     human: bool,
 ) -> anyhow::Result<()> {
-    let cfg = otell_core::config::Config::from_env().unwrap_or_default();
+    let cfg = otell_core::config::Config::load().unwrap_or_default();
 
     let (mut client_opt, connect_error): (Option<QueryClient>, Option<String>) =
         match connect_with_retry(uds, addr).await {
@@ -633,7 +633,9 @@ fn render_intro_markdown(input: IntroDocInput<'_>) -> anyhow::Result<String> {
     out.push_str(
         "| `trace` | `otell trace <trace_id>` | `--root <span_id>`, `--logs none\\|bounded\\|all` |\n",
     );
-    out.push_str("| `span` | `otell span <trace_id> <span_id>` | `--logs none\\|bounded\\|all` |\n");
+    out.push_str(
+        "| `span` | `otell span <trace_id> <span_id>` | `--logs none\\|bounded\\|all` |\n",
+    );
     out.push_str("| `metrics` | `otell metrics [<name>\\|list]` | `--since`, `--until`, `--service`, `--group-by`, `--agg`, `--limit` |\n");
     out.push_str("| `tail` | `otell tail [pattern]` | `--fixed`, `-i/--ignore-case`, `--service`, `--trace`, `--span`, `--severity`, `--http-addr` |\n");
     out.push_str("| `status` | `otell status` | _(no command-specific flags)_ |\n");
@@ -942,7 +944,7 @@ async fn run_server(
     query_uds_path: Option<PathBuf>,
     telemetry_cfg: TelemetryConfig,
 ) -> anyhow::Result<()> {
-    let mut cfg = Config::from_env().context("load config from env")?;
+    let mut cfg = Config::load().context("load config")?;
     if let Some(v) = db_path {
         cfg.db_path = v;
     }
