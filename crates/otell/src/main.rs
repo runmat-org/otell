@@ -17,7 +17,7 @@ use otell_core::query::{
     TraceRequest, TracesRequest,
 };
 use otell_core::time::{parse_duration_str, parse_time_or_relative};
-use otell_ingest::forward::{ForwardConfig, ForwardProtocol};
+use otell_ingest::forward::{ForwardCompression, ForwardConfig, ForwardProtocol};
 use otell_ingest::pipeline::PipelineConfig;
 use serde::Serialize;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -492,16 +492,6 @@ async fn run_intro(
     human: bool,
 ) -> anyhow::Result<()> {
     let cfg = otell_core::config::Config::from_env().unwrap_or_default();
-    let intro_commands = vec![
-        "otell run",
-        "otell intro",
-        "otell search \"error|timeout\" --since 15m --stats",
-        "otell traces --since 15m --limit 20",
-        "otell trace <trace_id>",
-        "otell span <trace_id> <span_id>",
-        "otell tail timeout --service api --severity WARN",
-        "otell handle <base64>",
-    ];
 
     let (mut client_opt, connect_error): (Option<QueryClient>, Option<String>) =
         match connect_with_retry(uds, addr).await {
@@ -565,7 +555,6 @@ async fn run_intro(
                 "metrics_list": metrics,
                 "search_count_stats": search,
             },
-            "next_commands": intro_commands,
         });
         println!("{}", serde_json::to_string_pretty(&payload)?);
         return Ok(());
@@ -573,13 +562,10 @@ async fn run_intro(
 
     let markdown = render_intro_markdown(IntroDocInput {
         connected,
-        connect_error,
         cfg: &cfg,
-        intro_commands: &intro_commands,
         status: status.as_ref(),
         metrics: metrics.as_ref(),
         search: search.as_ref(),
-        human,
     })?;
     println!("{markdown}");
 
@@ -588,82 +574,203 @@ async fn run_intro(
 
 struct IntroDocInput<'a> {
     connected: bool,
-    connect_error: Option<String>,
     cfg: &'a otell_core::config::Config,
-    intro_commands: &'a [&'a str],
     status: Option<&'a ApiResponse>,
     metrics: Option<&'a ApiResponse>,
     search: Option<&'a ApiResponse>,
-    human: bool,
+}
+
+fn escape_markdown_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', "<br/>")
 }
 
 fn render_intro_markdown(input: IntroDocInput<'_>) -> anyhow::Result<String> {
-    let audience = if input.human { "human" } else { "llm" };
     let mut out = String::new();
 
     out.push_str("# otell onboarding\n\n");
-    out.push_str(&format!("_Audience mode: {audience}_\n\n"));
-    out.push_str("`otell` is a local OpenTelemetry ingest and query utility for logs, traces, and metrics. This onboarding note is designed to be read directly by a coding model or developer to quickly establish what `otell` is, what instance is available right now, and which commands to run next.\n\n");
+    out.push_str("`otell` is a local OpenTelemetry ingest and query utility for logs, traces, and metrics.\n\n");
 
     out.push_str("## instance state\n\n");
-    out.push_str(&format!(
-        "- connected to running `otell run`: `{}`\n",
-        input.connected
-    ));
-    if let Some(err) = input.connect_error {
-        out.push_str(&format!("- connection error: `{err}`\n"));
-        out.push_str("- action: start `otell run`, then rerun `otell intro`\n");
+    if input.connected {
+        out.push_str("The local `otell` collector is running.\n");
+    } else {
+        out.push_str("The local `otell` collector is not running. The collector process can be started via `otell run`, and should be started in a background process.\n");
     }
     out.push('\n');
 
-    out.push_str("## endpoints\n\n");
+    out.push_str("## listening on endpoints\n\n");
     out.push_str(&format!("- ingest gRPC: `{}`\n", input.cfg.otlp_grpc_addr));
     out.push_str(&format!("- ingest HTTP: `{}`\n", input.cfg.otlp_http_addr));
     out.push_str(&format!(
-        "- query UDS: `{}`\n",
+        "- client query UDS: `{}`\n",
         input.cfg.uds_path.display()
     ));
-    out.push_str(&format!("- query TCP: `{}`\n", input.cfg.query_tcp_addr));
     out.push_str(&format!(
-        "- query HTTP: `{}`\n\n",
+        "- client query TCP: `{}`\n",
+        input.cfg.query_tcp_addr
+    ));
+    out.push_str(&format!(
+        "- client query HTTP: `{}`\n\n",
         input.cfg.query_http_addr
     ));
 
-    out.push_str("## recommended workflow\n\n");
-    out.push_str("1. Search logs for immediate failure signals (`error`, `timeout`) and inspect aggregate stats.\n");
-    out.push_str("2. List traces in a recent window and pick one relevant trace id.\n");
-    out.push_str("3. Inspect the trace structure, then zoom into one problematic span.\n");
-    out.push_str("4. Use `tail` for real-time follow-up while reproducing the issue.\n");
-    out.push_str("5. Reuse emitted handles to replay exact queries in an agent loop.\n\n");
+    out.push_str("## cli reference\n\n");
+    out.push_str("`otell [--json] [--uds <path> | --addr <host:port>] <command> [flags]`\n\n");
 
-    out.push_str("## next commands\n\n");
-    for command in input.intro_commands {
-        out.push_str(&format!("- `{command}`\n"));
-    }
-    out.push('\n');
+    out.push_str("### global flags\n\n");
+    out.push_str("| flag | purpose |\n");
+    out.push_str("|---|---|\n");
+    out.push_str("| `--json` | return structured JSON output |\n");
+    out.push_str("| `--uds <path>` | connect query client over Unix domain socket |\n");
+    out.push_str("| `--addr <host:port>` | connect query client over TCP |\n\n");
+
+    out.push_str("### command synopsis\n\n");
+    out.push_str("| command | usage | key flags |\n");
+    out.push_str("|---|---|---|\n");
+    out.push_str("| `run` | `otell run` | `--db-path`, `--otlp-grpc-addr`, `--otlp-http-addr`, `--query-tcp-addr`, `--query-http-addr`, `--query-uds-path` |\n");
+    out.push_str("| `search` | `otell search <pattern>` | `--fixed`, `-i/--ignore-case`, `--since`, `--until`, `--service`, `--trace`, `--span`, `--severity <LEVEL>`, `--where key=glob` (repeat), `-C <N\\|DURATION>`, `--count`, `--stats`, `--sort ts_asc\\|ts_desc`, `--limit` |\n");
+    out.push_str("| `traces` | `otell traces` | `--since`, `--until`, `--service`, `--status`, `--sort`, `--limit` |\n");
+    out.push_str(
+        "| `trace` | `otell trace <trace_id>` | `--root <span_id>`, `--logs none\\|bounded\\|all` |\n",
+    );
+    out.push_str("| `span` | `otell span <trace_id> <span_id>` | `--logs none\\|bounded\\|all` |\n");
+    out.push_str("| `metrics` | `otell metrics [<name>\\|list]` | `--since`, `--until`, `--service`, `--group-by`, `--agg`, `--limit` |\n");
+    out.push_str("| `tail` | `otell tail [pattern]` | `--fixed`, `-i/--ignore-case`, `--service`, `--trace`, `--span`, `--severity`, `--http-addr` |\n");
+    out.push_str("| `status` | `otell status` | _(no command-specific flags)_ |\n");
+    out.push_str("| `handle` | `otell handle <base64>` | _(no command-specific flags)_ |\n");
+    out.push_str("| `intro` | `otell intro` | `--human` |\n");
+    out.push_str("| `mcp` | `otell mcp` | stdio JSON-RPC mode (`initialize`, `tools/list`, `tools/call`) |\n\n");
+
+    out.push_str("### pattern semantics\n\n");
+    out.push_str("| area | supported | not supported |\n");
+    out.push_str("|---|---|---|\n");
+    out.push_str("| `search <pattern>` / `tail [pattern]` (default mode) | Rust `regex` syntax over log body text, with `-i/--ignore-case` for case-insensitive matching | Not full `ripgrep` query language; no PCRE-only features such as look-around assertions or backreferences |\n");
+    out.push_str("| `--fixed` | Literal substring match (no regex parsing) | Regex operators are treated as plain text |\n");
+    out.push_str("| `--where key=glob` | Attribute value glob matching (for example `attrs.peer=redis:*`) | Not regex; no regex capture groups or regex operators |\n\n");
+    out.push_str("Pattern matching applies to log body text only. Structured filters (`--service`, `--trace`, `--span`, `--severity`, `--where`) are applied separately.\n\n");
 
     if let Some(status) = input.status {
-        out.push_str("## live probe: status\n\n```json\n");
-        out.push_str(&serde_json::to_string_pretty(status)?);
-        out.push_str("\n```\n\n");
+        out.push_str("## database summary: status\n\n");
+        match status {
+            ApiResponse::Status(st) => {
+                out.push_str("| field | value |\n");
+                out.push_str("|---|---|\n");
+                out.push_str(&format!(
+                    "| db_path | {} |\n",
+                    escape_markdown_cell(&st.db_path)
+                ));
+                out.push_str(&format!("| db_size_bytes | {} |\n", st.db_size_bytes));
+                out.push_str(&format!("| logs_count | {} |\n", st.logs_count));
+                out.push_str(&format!("| spans_count | {} |\n", st.spans_count));
+                out.push_str(&format!("| metrics_count | {} |\n", st.metrics_count));
+                let oldest_ts = st
+                    .oldest_ts
+                    .map(|ts| ts.to_rfc3339())
+                    .unwrap_or_else(|| "-".to_string());
+                let newest_ts = st
+                    .newest_ts
+                    .map(|ts| ts.to_rfc3339())
+                    .unwrap_or_else(|| "-".to_string());
+                out.push_str(&format!("| oldest_ts | {} |\n", oldest_ts));
+                out.push_str(&format!("| newest_ts | {} |\n", newest_ts));
+            }
+            ApiResponse::Error(err) => {
+                out.push_str(&format!(
+                    "(status probe returned an error: {})\n",
+                    escape_markdown_cell(err)
+                ));
+            }
+            _ => {
+                out.push_str("(status probe returned an unexpected response type)\n");
+            }
+        }
+        out.push_str("\n\n");
     }
     if let Some(metrics) = input.metrics {
-        out.push_str("## live probe: metrics list\n\n```json\n");
-        out.push_str(&serde_json::to_string_pretty(metrics)?);
-        out.push_str("\n```\n\n");
+        out.push_str("## database summary: metrics list\n\n");
+        match metrics {
+            ApiResponse::MetricsList(resp) => {
+                out.push_str("| metric | count |\n");
+                out.push_str("|---|---|\n");
+                if resp.metrics.is_empty() {
+                    out.push_str("| _none_ | 0 |\n");
+                } else {
+                    for item in &resp.metrics {
+                        out.push_str(&format!(
+                            "| {} | {} |\n",
+                            escape_markdown_cell(&item.name),
+                            item.count
+                        ));
+                    }
+                }
+            }
+            ApiResponse::Error(err) => {
+                out.push_str(&format!(
+                    "(metrics list probe returned an error: {})\n",
+                    escape_markdown_cell(err)
+                ));
+            }
+            _ => {
+                out.push_str("(metrics list probe returned an unexpected response type)\n");
+            }
+        }
+        out.push('\n');
     }
     if let Some(search) = input.search {
-        out.push_str("## live probe: search count + stats\n\n```json\n");
-        out.push_str(&serde_json::to_string_pretty(search)?);
-        out.push_str("\n```\n\n");
-    }
+        out.push_str("## database summary: search count + stats\n\n");
+        match search {
+            ApiResponse::Search(resp) => {
+                out.push_str("| field | value |\n");
+                out.push_str("|---|---|\n");
+                out.push_str(&format!("| total_matches | {} |\n", resp.total_matches));
+                out.push_str(&format!("| returned | {} |\n", resp.returned));
 
-    out.push_str("## machine-use notes\n\n");
-    out.push_str("- Add `--json` to any query command for structured output.\n");
-    out.push_str(
-        "- Most query commands print `handle=...`; use `otell handle <base64>` to replay.\n",
-    );
-    out.push_str("- For local troubleshooting, run `otell status` and then `otell intro` again after state changes.\n");
+                if let Some(stats) = &resp.stats {
+                    out.push_str("\n### by service\n\n");
+                    out.push_str("| service | count |\n");
+                    out.push_str("|---|---|\n");
+                    if stats.by_service.is_empty() {
+                        out.push_str("| _none_ | 0 |\n");
+                    } else {
+                        for (service, count) in &stats.by_service {
+                            out.push_str(&format!(
+                                "| {} | {} |\n",
+                                escape_markdown_cell(service),
+                                count
+                            ));
+                        }
+                    }
+
+                    out.push_str("\n### by severity\n\n");
+                    out.push_str("| severity | count |\n");
+                    out.push_str("|---|---|\n");
+                    if stats.by_severity.is_empty() {
+                        out.push_str("| _none_ | 0 |\n");
+                    } else {
+                        for (severity, count) in &stats.by_severity {
+                            out.push_str(&format!(
+                                "| {} | {} |\n",
+                                escape_markdown_cell(severity),
+                                count
+                            ));
+                        }
+                    }
+                } else {
+                    out.push_str("\n(no grouped stats returned)\n");
+                }
+            }
+            ApiResponse::Error(err) => {
+                out.push_str(&format!(
+                    "(search probe returned an error: {})\n",
+                    escape_markdown_cell(err)
+                ));
+            }
+            _ => {
+                out.push_str("(search probe returned an unexpected response type)\n");
+            }
+        }
+        out.push('\n');
+    }
 
     Ok(out)
 }
@@ -884,6 +991,9 @@ async fn run_server(
             .map(|endpoint| ForwardConfig {
                 endpoint,
                 protocol: ForwardProtocol::parse(&cfg.forward_otlp_protocol),
+                compression: ForwardCompression::parse(&cfg.forward_otlp_compression),
+                headers: cfg.forward_otlp_headers.clone(),
+                timeout: cfg.forward_otlp_timeout,
             }),
     ));
 

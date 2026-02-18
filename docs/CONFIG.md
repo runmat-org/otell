@@ -55,6 +55,20 @@ Configuration is loaded from environment variables, then optionally overridden b
   - forwarding transport for inbound telemetry
   - values: `grpc` (default), `http/protobuf`
 
+- `OTELL_FORWARD_OTLP_COMPRESSION`
+  - outbound compression for forwarded inbound telemetry
+  - values: `none` (default), `gzip`
+
+- `OTELL_FORWARD_OTLP_HEADERS`
+  - additional headers/metadata for forwarded inbound telemetry
+  - format: comma-separated `key=value` pairs
+  - example: `x-tenant=dev,authorization=Bearer abc123`
+
+- `OTELL_FORWARD_OTLP_TIMEOUT`
+  - request timeout for forwarded inbound telemetry
+  - default: `10s`
+  - format: human durations (`500ms`, `5s`, `1m`)
+
 ## OTEL exporter env support
 
 `otell` uses OpenTelemetry exporter env conventions for outbound trace export.
@@ -67,7 +81,7 @@ Most common:
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, `otell` enables outbound trace export for otell's own runtime tracing via `tracing-opentelemetry`.
 
-Inbound telemetry forwarding is controlled separately by `OTELL_FORWARD_OTLP_ENDPOINT` + `OTELL_FORWARD_OTLP_PROTOCOL`.
+Inbound telemetry forwarding is controlled separately by `OTELL_FORWARD_OTLP_*`.
 
 ## Runtime write settings
 

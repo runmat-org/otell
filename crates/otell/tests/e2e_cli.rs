@@ -360,6 +360,7 @@ fn intro_without_server_guides_startup() {
         .output()
         .unwrap();
     let out = String::from_utf8_lossy(&output.stdout);
-    assert!(out.contains("connected to running `otell run`: `false`"));
+    assert!(out.contains("## instance state"));
+    assert!(out.contains("The local `otell` collector is not running."));
     assert!(out.contains("otell run"));
 }

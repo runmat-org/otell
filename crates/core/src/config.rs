@@ -20,6 +20,9 @@ pub struct Config {
     pub write_flush_ms: u64,
     pub forward_otlp_endpoint: Option<String>,
     pub forward_otlp_protocol: String,
+    pub forward_otlp_compression: String,
+    pub forward_otlp_headers: Vec<(String, String)>,
+    pub forward_otlp_timeout: Duration,
 }
 
 impl Default for Config {
@@ -50,6 +53,9 @@ impl Default for Config {
             write_flush_ms: 200,
             forward_otlp_endpoint: None,
             forward_otlp_protocol: "grpc".to_string(),
+            forward_otlp_compression: "none".to_string(),
+            forward_otlp_headers: Vec::new(),
+            forward_otlp_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -91,9 +97,41 @@ impl Config {
         if let Ok(v) = env::var("OTELL_FORWARD_OTLP_PROTOCOL") {
             cfg.forward_otlp_protocol = v;
         }
+        if let Ok(v) = env::var("OTELL_FORWARD_OTLP_COMPRESSION") {
+            cfg.forward_otlp_compression = v;
+        }
+        if let Ok(v) = env::var("OTELL_FORWARD_OTLP_HEADERS") {
+            cfg.forward_otlp_headers = parse_otlp_headers(&v)
+                .map_err(|e| OtellError::Config(format!("bad OTELL_FORWARD_OTLP_HEADERS: {e}")))?;
+        }
+        if let Ok(v) = env::var("OTELL_FORWARD_OTLP_TIMEOUT") {
+            cfg.forward_otlp_timeout = humantime::parse_duration(&v)
+                .map_err(|e| OtellError::Config(format!("bad OTELL_FORWARD_OTLP_TIMEOUT: {e}")))?;
+        }
 
         Ok(cfg)
     }
+}
+
+fn parse_otlp_headers(raw: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    for entry in raw.split(',') {
+        let trimmed = entry.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            return Err(OtellError::Config(
+                "header entries must use key=value syntax".to_string(),
+            ));
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(OtellError::Config("header key cannot be empty".to_string()));
+        }
+        out.push((key.to_string(), value.trim().to_string()));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -114,5 +152,23 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.retention_ttl, Duration::from_secs(86_400));
         assert!(cfg.retention_max_bytes > 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_otlp_headers_accepts_list() {
+        let headers = parse_otlp_headers("x-tenant=dev,authorization=Bearer token").unwrap();
+        assert_eq!(
+            headers,
+            vec![
+                ("x-tenant".to_string(), "dev".to_string()),
+                ("authorization".to_string(), "Bearer token".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_otlp_headers_rejects_bad_entries() {
+        assert!(parse_otlp_headers("x-tenant").is_err());
+        assert!(parse_otlp_headers("=dev").is_err());
     }
 }

@@ -26,64 +26,28 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 ```
 
-3) Run onboarding probes:
+3) Add the following to your AGENTS.md file or equivalent to teach your model how to use otell.
 
-```bash
+```markdown
+# Development Logging and Observability
+
+The development setup is forwarding logs/traces/metrics to a local OpenTelemetry Collector called `otell` that is listening on 4317/4318.
+
+To see the logs/traces/metrics, you can use the `otell` tool. Run `otell intro` to learn how to use the tool to search for logs/traces/metrics.
+
+\`\`\`
 otell intro
+otell search
+otell traces
+otell trace
+otell span
+\`\`\`
 ```
 
-4) Query data:
+4) (Optional) query data yourself:
 
 ```bash
 otell search "error|timeout" --since 15m --stats
 otell traces --since 15m --limit 20
 otell trace <trace_id>
-```
-
-## Docs
-
-### Model bootstrap 
-
-Paste the contents of `MODEL_QUICKSTART.md` into your AGENTS.md file or equivalent to teach your model how to use otell.
-
-### Reference documentation
-
-- Getting started: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
-- CLI reference: [docs/CLI.md](docs/CLI.md)
-- API reference: [docs/API.md](docs/API.md)
-- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- Configuration: [docs/CONFIG.md](docs/CONFIG.md)
-- Development + release: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-
-## Common commands
-
-- `otell run` start ingest/query services
-- `otell intro [--human] [--json]` onboarding probes
-- `otell search <pattern>` deterministic log search
-- `otell traces`, `otell trace`, `otell span` trace drill-down
-- `otell metrics <name>` and `otell metrics list`
-- `otell status` storage/health snapshot
-- `otell handle <base64>` re-run encoded query handle
-- `otell mcp` JSON-RPC MCP server over stdio
-
-## Project layout
-
-- `crates/core` shared models/config/errors/query types
-- `crates/store` DuckDB schema, insert/query paths, retention
-- `crates/ingest` OTLP gRPC/HTTP receivers + decode pipeline
-- `crates/otell` CLI, query servers, MCP, output formatting
-- `crates/testkit` test fixtures
-
-## Development
-
-Run tests:
-
-```bash
-cargo test
-```
-
-Format code:
-
-```bash
-cargo fmt
 ```

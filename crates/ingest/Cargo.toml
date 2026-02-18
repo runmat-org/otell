@@ -11,6 +11,7 @@ description = "OTLP ingest servers and decode pipeline for otell"
 axum.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+flate2.workspace = true
 futures.workspace = true
 opentelemetry-proto.workspace = true
 prost.workspace = true
