@@ -17,16 +17,16 @@ otell traces
 otell trace
 otell span
 \`\`\`
-`;
+`.trim();
 
 const START_OTELL_CONTENT = `
 otell run
-`;
+`.trim();
 
 const SEND_TELEMETRY_CONTENT = `
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
 export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-`;
+`.trim();
 
 const ADVANCED_USAGE_CONTENT = `
 export OTELL_FORWARD_OTLP_ENDPOINT=http://remote-collector.example
@@ -39,7 +39,7 @@ export OTELL_FORWARD_OTLP_TIMEOUT=10s
 const CONFIG_CONTENT = `
 #   Linux:   ~/.config/otell/config.toml
 #   macOS:   ~/.config/otell/config.toml
-#   Windows: %APPDATA%\otell\config.toml
+#   Windows: %APPDATA%\\otell\\config.toml
 
 db_path = "/Users/me/.local/share/otell/otell.duckdb"
 otlp_grpc_addr = "127.0.0.1:4317"
@@ -76,7 +76,9 @@ function detectPlatform(): Platform {
 
 export default function Home() {
   const [platform, setPlatform] = useState<Platform>(() => detectPlatform());
-  const [copied, setCopied] = useState<boolean>(false);
+  const [linkCopied, setLinkCopied] = useState<boolean>(false);
+  const [agentMdCopied, setAgentMdCopied] = useState<boolean>(false);
+  const [sendTelemetryCopied, setSendTelemetryCopied] = useState<boolean>(false);
 
   const installCommand = useMemo((): string => {
     if (platform === "windows") {
@@ -85,26 +87,35 @@ export default function Home() {
     return "curl -fsSL https://otell.dev/install.sh | sh";
   }, [platform]);
 
-  const onCopyLink = async (): Promise<void> => {
+  const onInstallCopy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(installCommand);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 1200);
     } catch {
-      setCopied(false);
+      setLinkCopied(false);
     }
   };
 
   const onAgentMdCopy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(AGENTS_MD_CONTENT);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
+      setAgentMdCopied(true);
+      window.setTimeout(() => setAgentMdCopied(false), 1200);
     } catch {
-      setCopied(false);
+      setAgentMdCopied(false);
     }
   };
 
+  const onSendTelemetryCopy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(SEND_TELEMETRY_CONTENT);
+      setSendTelemetryCopied(true);
+      window.setTimeout(() => setSendTelemetryCopied(false), 1200);
+    } catch {
+      setSendTelemetryCopied(false);
+    }
+  };
   const onViewSource = (): void => {
     window.open("https://github.com/runmat-org/otell", "_blank");
   };
@@ -140,8 +151,8 @@ export default function Home() {
 
         <div className="commandRow">
           <pre>{installCommand}</pre>
-          <button type="button" onClick={onCopyLink} className="copyButton">
-            {copied ? "Copied" : "Copy"}
+          <button type="button" onClick={onInstallCopy} className="copyButton">
+            {linkCopied ? "Copied" : "Copy"}
           </button>
         </div>
       </section>
@@ -157,8 +168,8 @@ export default function Home() {
         <h2>Send your logs/traces/metrics to otell</h2>
         <div className="commandRow">
           <pre>{SEND_TELEMETRY_CONTENT}</pre>
-          <button type="button" onClick={onCopyLink} className="copyButton">
-            {copied ? "Copied" : "Copy"}
+          <button type="button" onClick={onSendTelemetryCopy} className="copyButton">
+            {sendTelemetryCopied ? "Copied" : "Copy"}
           </button>
         </div>
       </section>
@@ -172,7 +183,7 @@ export default function Home() {
           {AGENTS_MD_CONTENT}
         </pre>
         <div className="commandRow"> <button type="button" onClick={onAgentMdCopy} className="copyButton">
-          {copied ? "Copied" : "Copy"}
+          {agentMdCopied ? "Copied" : "Copy"}
         </button></div>
       </section>
 

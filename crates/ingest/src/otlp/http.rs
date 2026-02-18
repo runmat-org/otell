@@ -1,4 +1,5 @@
 use axum::extract::State;
+use axum::http::Method;
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Router, body::Bytes};
@@ -6,6 +7,7 @@ use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use prost::Message;
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::Level;
 
@@ -24,10 +26,15 @@ pub fn router(pipeline: Pipeline, forwarder: Option<Forwarder>) -> Router {
         pipeline,
         forwarder,
     };
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
     Router::new()
         .route("/v1/logs", post(export_logs))
         .route("/v1/traces", post(export_traces))
         .route("/v1/metrics", post(export_metrics))
+        .layer(cors)
         .layer(
             TraceLayer::new_for_http()
                 .on_request(tower_http::trace::DefaultOnRequest::new().level(Level::INFO))

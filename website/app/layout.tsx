@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "otell",
-  description: "otell.dev - local OpenTelemetry ingest and query tool",
+  title: "Otell: Local OpenTelemetry Tool Designed for LLM Agents",
+  description: "Otell is a local OpenTelemetry tool designed for LLM agents. It allows you to ingest and query telemetry data locally, without the need for a remote collector.",
 };
 
 export default function RootLayout({
