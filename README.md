@@ -33,7 +33,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
 
 The development setup is forwarding logs/traces/metrics to a local OpenTelemetry Collector called `otell` that is listening on 4317/4318.
 
-To see the logs/traces/metrics, you can use the `otell` tool. Run `otell intro` to learn how to use the tool to search for logs/traces/metrics.
+To see the logs/traces/metrics, you can use the `otell` binary. Run `otell intro` to learn how to use the binary to search for logs/traces/metrics.
 
 \`\`\`
 otell intro
