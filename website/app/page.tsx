@@ -41,12 +41,13 @@ const CONFIG_CONTENT = `
 #   macOS:   ~/.config/otell/config.toml
 #   Windows: %APPDATA%\\otell\\config.toml
 
-db_path = "/Users/me/.local/share/otell/otell.duckdb"
 otlp_grpc_addr = "127.0.0.1:4317"
 otlp_http_addr = "127.0.0.1:4318"
+
+db_path = "/Users/me/.local/share/otell/otell.duckdb"
+uds_path = "/tmp/otell.sock"
 query_tcp_addr = "127.0.0.1:1777"
 query_http_addr = "127.0.0.1:1778"
-uds_path = "/tmp/otell.sock"
 
 retention_ttl = "24h"
 retention_max_bytes = 2147483648
@@ -195,7 +196,7 @@ export default function Home() {
         <pre>
           {ADVANCED_USAGE_CONTENT}</pre>
         <br />
-        <p>Configure otel via environment variables or config file:</p>
+        <p><a href="https://github.com/runmat-org/otell/blob/main/docs/CONFIG.md">Configure otell</a> via environment variables or config file:</p>
         <pre>
           {CONFIG_CONTENT}
         </pre>

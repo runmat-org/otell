@@ -1809,6 +1809,7 @@ dependencies = [
  "otell-store",
  "prost",
  "reqwest",
+ "serde",
  "serde_json",
  "tokio",
  "tonic 0.13.1",

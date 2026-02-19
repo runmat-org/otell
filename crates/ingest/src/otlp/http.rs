@@ -1,12 +1,13 @@
 use axum::extract::State;
-use axum::http::Method;
-use axum::http::StatusCode;
+use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderMap, Method, StatusCode};
 use axum::routing::post;
 use axum::{Router, body::Bytes};
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
 use opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest;
 use opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceRequest;
 use prost::Message;
+use serde::de::DeserializeOwned;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::Level;
@@ -43,9 +44,13 @@ pub fn router(pipeline: Pipeline, forwarder: Option<Forwarder>) -> Router {
         .with_state(state)
 }
 
-async fn export_logs(State(state): State<HttpIngestState>, body: Bytes) -> StatusCode {
-    let Ok(req) = ExportLogsServiceRequest::decode(body) else {
-        tracing::warn!("otlp http logs decode failed");
+async fn export_logs(
+    State(state): State<HttpIngestState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    let Ok(req) = decode_otlp_http_payload::<ExportLogsServiceRequest>("logs", &headers, &body)
+    else {
         return StatusCode::BAD_REQUEST;
     };
     if let Some(forwarder) = &state.forwarder {
@@ -67,9 +72,13 @@ async fn export_logs(State(state): State<HttpIngestState>, body: Bytes) -> Statu
     StatusCode::OK
 }
 
-async fn export_traces(State(state): State<HttpIngestState>, body: Bytes) -> StatusCode {
-    let Ok(req) = ExportTraceServiceRequest::decode(body) else {
-        tracing::warn!("otlp http traces decode failed");
+async fn export_traces(
+    State(state): State<HttpIngestState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    let Ok(req) = decode_otlp_http_payload::<ExportTraceServiceRequest>("traces", &headers, &body)
+    else {
         return StatusCode::BAD_REQUEST;
     };
     if let Some(forwarder) = &state.forwarder {
@@ -90,9 +99,14 @@ async fn export_traces(State(state): State<HttpIngestState>, body: Bytes) -> Sta
     StatusCode::OK
 }
 
-async fn export_metrics(State(state): State<HttpIngestState>, body: Bytes) -> StatusCode {
-    let Ok(req) = ExportMetricsServiceRequest::decode(body) else {
-        tracing::warn!("otlp http metrics decode failed");
+async fn export_metrics(
+    State(state): State<HttpIngestState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> StatusCode {
+    let Ok(req) =
+        decode_otlp_http_payload::<ExportMetricsServiceRequest>("metrics", &headers, &body)
+    else {
         return StatusCode::BAD_REQUEST;
     };
     if let Some(forwarder) = &state.forwarder {
@@ -122,4 +136,126 @@ async fn export_metrics(State(state): State<HttpIngestState>, body: Bytes) -> St
     tracing::debug!(count = points.len(), "otlp http metrics accepted");
     state.pipeline.submit_metrics(points).await;
     StatusCode::OK
+}
+
+fn is_json_content_type(headers: &HeaderMap) -> bool {
+    let Some(content_type) = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    content_type.to_ascii_lowercase().contains("json")
+}
+
+fn decode_otlp_http_payload<T>(
+    signal: &'static str,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> Result<T, StatusCode>
+where
+    T: Message + Default + DeserializeOwned,
+{
+    let content_type = headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("<missing>");
+
+    if is_json_content_type(headers) {
+        match serde_json::from_slice::<T>(body) {
+            Ok(req) => return Ok(req),
+            Err(json_err) => match T::decode(body) {
+                Ok(req) => {
+                    tracing::warn!(
+                        signal,
+                        content_type,
+                        error = %json_err,
+                        "otlp http payload matched protobuf despite json content-type",
+                    );
+                    return Ok(req);
+                }
+                Err(proto_err) => {
+                    tracing::warn!(
+                        signal,
+                        content_type,
+                        json_error = %json_err,
+                        protobuf_error = %proto_err,
+                        "otlp http payload decode failed",
+                    );
+                    return Err(StatusCode::BAD_REQUEST);
+                }
+            },
+        }
+    }
+
+    match T::decode(body) {
+        Ok(req) => Ok(req),
+        Err(proto_err) => match serde_json::from_slice::<T>(body) {
+            Ok(req) => {
+                tracing::warn!(
+                    signal,
+                    content_type,
+                    error = %proto_err,
+                    "otlp http payload matched json despite non-json content-type",
+                );
+                Ok(req)
+            }
+            Err(json_err) => {
+                tracing::warn!(
+                    signal,
+                    content_type,
+                    protobuf_error = %proto_err,
+                    json_error = %json_err,
+                    "otlp http payload decode failed",
+                );
+                Err(StatusCode::BAD_REQUEST)
+            }
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    #[test]
+    fn decode_json_payload_with_json_content_type() {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let body = br#"{"resourceLogs":[]}"#;
+        let decoded =
+            decode_otlp_http_payload::<ExportLogsServiceRequest>("logs", &headers, body).unwrap();
+
+        assert!(decoded.resource_logs.is_empty());
+    }
+
+    #[test]
+    fn decode_protobuf_payload_without_content_type() {
+        let headers = HeaderMap::new();
+        let req = ExportTraceServiceRequest {
+            resource_spans: Vec::new(),
+        };
+        let mut body = Vec::new();
+        req.encode(&mut body).unwrap();
+
+        let decoded =
+            decode_otlp_http_payload::<ExportTraceServiceRequest>("traces", &headers, &body)
+                .unwrap();
+
+        assert!(decoded.resource_spans.is_empty());
+    }
+
+    #[test]
+    fn decode_json_payload_without_content_type_fallback() {
+        let headers = HeaderMap::new();
+        let body = br#"{"resourceMetrics":[]}"#;
+
+        let decoded =
+            decode_otlp_http_payload::<ExportMetricsServiceRequest>("metrics", &headers, body)
+                .unwrap();
+
+        assert!(decoded.resource_metrics.is_empty());
+    }
 }

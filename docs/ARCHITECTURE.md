@@ -8,7 +8,7 @@
 
 - OTLP ingest servers
   - gRPC ingest
-  - HTTP protobuf ingest
+  - HTTP ingest (protobuf + JSON)
 - Query servers
   - UDS line-JSON server
   - TCP line-JSON server

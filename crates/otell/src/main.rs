@@ -35,6 +35,7 @@ use crate::telemetry::{
 #[derive(Parser, Debug)]
 #[command(name = "otell")]
 #[command(about = "Local OTEL ingest and query utility")]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -172,6 +173,8 @@ enum Commands {
         #[arg(long, help = "Human-friendly explanatory output")]
         human: bool,
     },
+    #[command(about = "Show otell version")]
+    Version,
     Mcp,
 }
 
@@ -408,6 +411,20 @@ async fn main() -> anyhow::Result<()> {
             init_cli_tracing();
             run_mcp(cli.uds, cli.addr).await
         }
+        Commands::Version => {
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "name": "otell",
+                        "version": env!("CARGO_PKG_VERSION")
+                    }))?
+                );
+            } else {
+                println!("otell {}", env!("CARGO_PKG_VERSION"));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -621,6 +638,7 @@ fn render_intro_markdown(input: IntroDocInput<'_>) -> anyhow::Result<String> {
     out.push_str("| flag | purpose |\n");
     out.push_str("|---|---|\n");
     out.push_str("| `--json` | return structured JSON output |\n");
+    out.push_str("| `--version`, `-V` | print version information and exit |\n");
     out.push_str("| `--uds <path>` | connect query client over Unix domain socket |\n");
     out.push_str("| `--addr <host:port>` | connect query client over TCP |\n\n");
 
@@ -641,6 +659,7 @@ fn render_intro_markdown(input: IntroDocInput<'_>) -> anyhow::Result<String> {
     out.push_str("| `status` | `otell status` | _(no command-specific flags)_ |\n");
     out.push_str("| `handle` | `otell handle <base64>` | _(no command-specific flags)_ |\n");
     out.push_str("| `intro` | `otell intro` | `--human` |\n");
+    out.push_str("| `version` | `otell version` | _(no command-specific flags)_ |\n");
     out.push_str("| `mcp` | `otell mcp` | stdio JSON-RPC mode (`initialize`, `tools/list`, `tools/call`) |\n\n");
 
     out.push_str("### pattern semantics\n\n");
@@ -1113,6 +1132,7 @@ fn print_response(response: ApiResponse, json: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::error::ErrorKind;
 
     #[test]
     fn parse_logs_mode_variants() {
@@ -1146,5 +1166,17 @@ mod tests {
         assert_eq!(parse_context(Some("20".into())).unwrap(), (20, None));
         assert_eq!(parse_context(Some("2s".into())).unwrap(), (0, Some(2)));
         assert!(parse_context(Some("wat".into())).is_err());
+    }
+
+    #[test]
+    fn parse_version_subcommand() {
+        let cli = Cli::try_parse_from(["otell", "version"]).unwrap();
+        assert!(matches!(cli.command, Commands::Version));
+    }
+
+    #[test]
+    fn parse_version_flag() {
+        let err = Cli::try_parse_from(["otell", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::DisplayVersion);
     }
 }

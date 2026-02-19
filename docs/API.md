@@ -14,7 +14,9 @@ This document defines the public API surfaces for `otell`.
 Ingest is OpenTelemetry Protocol (OTLP) over:
 
 - gRPC (`4317` default)
-- HTTP protobuf (`4318` default)
+- HTTP (`4318` default), supporting:
+  - protobuf payloads (`application/x-protobuf`)
+  - JSON payloads (`application/json`)
 
 Current compatibility target: stable command/query semantics for local debugging workflows. New fields may be added over time; callers should ignore unknown fields.
 
@@ -208,7 +210,7 @@ data: {"ts":"2026-02-12T20:25:02.004Z","service":"api","severity":17,"trace_id":
 Ingest accepts OTLP from applications and SDKs:
 
 - gRPC services for logs/traces/metrics
-- HTTP protobuf endpoints:
+- HTTP OTLP endpoints (protobuf or JSON payloads):
   - `POST /v1/logs`
   - `POST /v1/traces`
   - `POST /v1/metrics`
